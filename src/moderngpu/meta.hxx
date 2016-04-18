@@ -179,26 +179,36 @@ MGPU_DEVICE void strided_iterate(func_t f, int tid) {
 }
 
 // Check range.
-template<int nt, int vt, int vt0 = vt, typename func_t>
-MGPU_DEVICE void strided_iterate(func_t f, int tid, int count) {
+template<int nt, int vt, int vt0 = vt, typename if_t, typename else_t>
+MGPU_DEVICE void strided_iterate_if_else(if_t if_f, else_t else_f,
+  int tid, int count) {
+
   // Unroll the first vt0 elements of each thread.
   if(count >= nt * vt0) {
-    strided_iterate<nt, vt0>(f, tid);    // No checking
+    strided_iterate<nt, vt0>(if_f, tid);    // No checking.
   } else {
     iterate<vt0>([=](int i) {
       int j = nt * i + tid;
-      if(j < count) f(i, j);
+      if(j < count) if_f(i, j);
+      else else_f(i, j);
     });
   }
 
   iterate<vt0, vt>([=](int i) {
     int j = nt * i + tid;
-    if(j < count) f(i, j);
+    if(j < count) if_f(i, j);
+    else else_f(i, j);
   });
+}
+
+template<int nt, int vt, int vt0 = vt, typename func_t>
+MGPU_DEVICE void strided_iterate(func_t f, int tid, int count) {
+  strided_iterate_if_else<nt, vt, vt0>(f, [](int i, int j) { }, tid, count);
 }
 template<int vt, typename func_t>
 MGPU_DEVICE void thread_iterate(func_t f, int tid) {
   iterate<vt>([=](int i) { f(i, vt * tid + i); });
 }
+
 
 END_MGPU_NAMESPACE

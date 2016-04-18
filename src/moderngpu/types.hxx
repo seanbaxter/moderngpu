@@ -4,7 +4,6 @@
 #include "meta.hxx"
 #include "operators.hxx"
 
-
 BEGIN_MGPU_NAMESPACE
 
 struct cuda_exception_t : std::exception {
@@ -15,7 +14,6 @@ struct cuda_exception_t : std::exception {
     return cudaGetErrorString(result); 
   }
 };
-
 
 template<typename type_t, int size>
 struct array_t {
