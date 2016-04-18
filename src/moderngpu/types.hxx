@@ -93,7 +93,6 @@ MGPU_HOST_DEVICE range_t get_tile(int cta, int nv, int count) {
   return range_t { nv * cta, min(count, nv * (cta + 1)) };
 }
 
-
 struct MGPU_ALIGN(16) merge_range_t {
   int a_begin, a_end, b_begin, b_end;
 
@@ -140,6 +139,32 @@ template<typename type_t, int size>
 struct merge_pair_t {
   array_t<type_t, size> keys;
   array_t<int, size> indices;
+};
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Task range support
+// Evenly distributes variable-length arrays over a fixed number of CTAs.
+
+struct task_range_t {
+  int count, granularity, quot, rem;
+
+  task_range_t(int count, int granularity, int num_workers) {
+    this->count = count;
+    this->granularity = granularity;
+    int num_granules = div_up(count, granularity);
+    quot = num_granules / num_workers;
+    rem = num_granules % num_workers;
+  }
+
+  MGPU_HOST_DEVICE range_t get_range(int worker) const {
+    int begin = quot * worker + min(worker, rem);
+    int end = begin + quot + (worker < rem);
+    return range_t {
+      granularity * begin,
+      min(count, granularity * end)
+    };
+  }
 };
 
 

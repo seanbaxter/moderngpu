@@ -6,9 +6,10 @@ BEGIN_MGPU_NAMESPACE
 // Pass share to upsweep.
 template<int digit_size, typename launch_arg_t = empty_t, 
   typename input_it, typename digit_f>
-void radixsort_upsweep(input_it input, int count, digit_f digits_func,
-  int* frequencies, context_t& context) {
+void radixsort_upsweep(input_it input, int count, task_range_t task_range,
+  digit_f digits_func, int* frequencies, context_t& context) {
 
+  // These numbers do not depend on the task range granularity at all.
   typedef typename conditional_typedef_t<launch_arg_t, 
     launch_box_t<
       arch_20_cta<128, 8>,
@@ -75,19 +76,20 @@ void radixsort_upsweep(input_it input, int count, digit_f digits_func,
     });
     __syncthreads();
      
-    { 
+    range_t range = task_range.get_range(cta);
+
+    while(range.begin < range.end) {
       // Avoid an overflow by widening the counters into register.
       if(counter_progress + vt > 255)
         unpack_counter();
       
       // Stream through a portion of the inputs.
-      range_t tile = get_tile(cta, nv, count);
       int digits[vt];
 
       strided_iterate_if_else<nt, vt>(
-        [&](int i, int j) { digits[i] = digits_func(input[tile.begin + j]); },
+        [&](int i, int j) { digits[i] = digits_func(input[range.begin + j]); },
         [&](int i, int j) { digits[i] = num_digits - 1; },
-        tid, tile.count()
+        tid, range.count()
       );
 
       iterate<vt>([&](int i) {
@@ -97,6 +99,7 @@ void radixsort_upsweep(input_it input, int count, digit_f digits_func,
 
       // Reflect the advance in values.
       counter_progress += vt;
+      range.begin += nv;
     }
     if(counter_progress > 0) unpack_counter();
 
@@ -131,7 +134,8 @@ void radixsort_upsweep(input_it input, int count, digit_f digits_func,
 
 void radixsort(uint32_t* keys, int count, context_t& context) {
   int bit = 1;
-  radixsort_upsweep<5>(keys, count, 
+  task_range_t task_range(count, 128 * 7, 500);
+  radixsort_upsweep<5>(keys, count, task_range,
     [=]MGPU_DEVICE(int arg) { return 31 & (arg>> bit); },
     (int*)nullptr, context);
 }
@@ -142,3 +146,4 @@ int main(int argc, char** argv) {
 
   return 0;
 }
+
