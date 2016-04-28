@@ -88,11 +88,10 @@ public:
   }
 
   void print_nodes() const {
-    
+    validate_list();
     printf("%d nodes:\n", (int)nodes.size());
     for(const auto& n : nodes) {
-      printf("%8lu : %p (%d:%8lu)  (%8lu - %8lu)\n", n.second.size, n.first, 
-        free_nodes.end() != n.second.free_node,
+      printf("%8lu : %p (%8lu)  (%8lu - %8lu)\n", n.second.size, n.first, 
         free_nodes.end() != n.second.free_node ? n.second.free_node->first : 0,
         n.second.prev != nodes.end() ? n.second.prev->second.size : 0,
         n.second.next != nodes.end() ? n.second.next->second.size : 0
@@ -110,7 +109,8 @@ public:
   }
 
   void* allocate(size_t size) {
-    validate_list();
+    print_nodes();
+    printf("ALLOC %lu\n", size);
     // TODO: align me.
     // TODO: look in the stream free list first.
     if(size < 4) size = 4;
@@ -188,7 +188,7 @@ public:
   }
 
   void free(void* p_) {
-    validate_list();
+    print_nodes();
     char* p = static_cast<char*>(p_);
     node_it node = nodes.lower_bound(p);
     assert(nodes.end() != node);
@@ -210,12 +210,12 @@ public:
       // The preceding node is in the same chunk and also free. Coalesce 
       // and erase this node.
       prev->second.size += node->second.size;
+      node->second.size = 0;
       free_nodes.erase(prev->second.free_node);
       prev->second.free_node = free_nodes.insert(
         std::make_pair(prev->second.size, prev)
       ).first;
 
-      node->second.size = 0;
       remove(node);      
       node = prev;
     } else {
@@ -223,13 +223,16 @@ public:
         std::make_pair(node->second.size, node)).first;
     }
 
+    print_nodes();
+    printf("FREE(2)\n");
     // Collapse this node with the neighbor to the right.
     if(nodes.end() != next &&
       next->second.chunk == chunk &&
       free_nodes.end() != next->second.free_node) {
 
+      assert(next->second.size == next->second.free_node->first);
+
       node->second.size += next->second.size;
-      next->second.size = 0;
 
       free_nodes.erase(node->second.free_node);
       node->second.free_node = free_nodes.insert(
@@ -238,7 +241,7 @@ public:
 
       remove(next);
     }
-    validate_list();
+    printf("FREE DONE\n");
   }
 };
 
@@ -261,7 +264,6 @@ int main(int argc, char** argv) {
       x[index] = alloc.allocate(rand() % 10000);
     }
 
-    alloc.print_nodes();
     printf("Iterations %5d  %lu %lu\n", i, alloc.allocated(), alloc.capacity());
 
     printf("\n\n");
