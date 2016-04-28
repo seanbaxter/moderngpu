@@ -14,7 +14,7 @@ all: \
 	demos
 
 allocator: allocator.cxx
-	g++ -g -O0 -std=c++11 -o $@ $<
+	g++ -g -O2 -std=c++11 -o $@ $<
 
 # kernel tests
 tests: \

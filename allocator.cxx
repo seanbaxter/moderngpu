@@ -15,7 +15,7 @@ class block_allocator_t {
     chunk_it chunk;
     node_it prev, next;
     size_t size;
-    std::map<size_t, node_it>::iterator free_node;
+    std::multimap<size_t, node_it>::iterator free_node;
   };
 
   struct chunk_t {
@@ -28,7 +28,7 @@ class block_allocator_t {
   std::list<chunk_t> chunks;
 
   // Sort free nodes by size.
-  std::map<size_t, node_it> free_nodes;
+  std::multimap<size_t, node_it> free_nodes;
 
   // Data for all nodes, indexed by address.
   std::map<char*, node_t> nodes;
@@ -44,9 +44,7 @@ class block_allocator_t {
     if(free_nodes.end() != node->second.free_node) {
       assert(node->second.free_node->first == node->second.size);
       free_nodes.erase(node->second.free_node);
-    } else 
-      node->second.chunk->available += node->second.size;
-
+    }
     // Erase the node.
     nodes.erase(node);
   }
@@ -75,7 +73,7 @@ public:
   }
 
   void validate_list() const {
-    
+    return;
     for(auto i = nodes.begin(); i != nodes.end(); ++ i) {
       if(nodes.end() != i->second.prev) {
         assert(i->second.prev->second.next == i);
@@ -88,29 +86,33 @@ public:
   }
 
   void print_nodes() const {
+    return;
     validate_list();
-    printf("%d nodes:\n", (int)nodes.size());
+  //  printf("%d nodes:\n", (int)nodes.size());
     for(const auto& n : nodes) {
-      printf("%8lu : %p (%8lu)  (%8lu - %8lu)\n", n.second.size, n.first, 
-        free_nodes.end() != n.second.free_node ? n.second.free_node->first : 0,
-        n.second.prev != nodes.end() ? n.second.prev->second.size : 0,
-        n.second.next != nodes.end() ? n.second.next->second.size : 0
-      );
+    //  printf("%8lu : %p (%8lu)  (%8lu - %8lu)\n", n.second.size, n.first, 
+    //    free_nodes.end() != n.second.free_node ? n.second.free_node->first : 0,
+    //    n.second.prev != nodes.end() ? n.second.prev->second.size : 0,
+    //    n.second.next != nodes.end() ? n.second.next->second.size : 0
+    //  );
 
       if(free_nodes.end() != n.second.free_node) {
         assert(n.second.free_node->first == n.second.size);
       }
     }
-    printf("%d free nodes:\n", (int)free_nodes.size());
-    for(const auto& n : free_nodes)
-      printf("%8lu : %p (%d)  %lu\n", n.first, n.second->first, 
-        free_nodes.end() != n.second->second.free_node,
-        n.second->second.size);
+  //  printf("%d free nodes:\n", (int)free_nodes.size());
+    for(const auto& n : free_nodes) {
+    //  printf("%8lu : %p (%d)  %lu\n", n.first, n.second->first, 
+    //    free_nodes.end() != n.second->second.free_node,
+    //    n.second->second.size);
+
+      assert(free_nodes.end() != n.second->second.free_node);
+      assert(n.first == n.second->second.size);
+    }
   }
 
   void* allocate(size_t size) {
     print_nodes();
-    printf("ALLOC %lu\n", size);
     // TODO: align me.
     // TODO: look in the stream free list first.
     if(size < 4) size = 4;
@@ -143,7 +145,7 @@ public:
       }
       free_node = node->second.free_node = free_nodes.insert(
         std::make_pair(node->second.size, node)
-      ).first;
+      );
     }
 
     node_it node = free_node->second;
@@ -178,11 +180,10 @@ public:
         node->second.next->second.prev = new_node;
       node->second.next = new_node;
       new_node->second.free_node = 
-        free_nodes.insert(std::make_pair(excess, new_node)).first;
+        free_nodes.insert(std::make_pair(excess, new_node));
     }
 
     validate_list();
-    printf("ALOC %8lu - %p\n", size, node->first);
 
     return node->first;
   }
@@ -193,55 +194,55 @@ public:
     node_it node = nodes.lower_bound(p);
     assert(nodes.end() != node);
 
-    printf("FREE %8lu - %p\n", node->second.size, node->first);
-
     chunk_it chunk = node->second.chunk;
     chunk->available += node->second.size;
 
-    // Collapse this node with its neighbor to the left.
+    // Put this node back in the free map.
+    assert(free_nodes.end() == node->second.free_node);
+    node->second.free_node = free_nodes.insert(
+      std::make_pair(node->second.size, node)
+    );
+    
     node_it prev = node->second.prev;
     node_it next = node->second.next;
-    if(nodes.end() != prev && 
+    if(nodes.end() != prev &&
       prev->second.chunk == chunk &&
       free_nodes.end() != prev->second.free_node) {
 
+      // Prev guy is free. Collapse node into prev.
       assert(prev->second.size == prev->second.free_node->first);
 
-      // The preceding node is in the same chunk and also free. Coalesce 
-      // and erase this node.
       prev->second.size += node->second.size;
-      node->second.size = 0;
+      remove(node);
+
       free_nodes.erase(prev->second.free_node);
       prev->second.free_node = free_nodes.insert(
         std::make_pair(prev->second.size, prev)
-      ).first;
-
-      remove(node);      
+      );
       node = prev;
-    } else {
-      node->second.free_node = free_nodes.insert(
-        std::make_pair(node->second.size, node)).first;
     }
 
     print_nodes();
-    printf("FREE(2)\n");
-    // Collapse this node with the neighbor to the right.
     if(nodes.end() != next &&
       next->second.chunk == chunk &&
       free_nodes.end() != next->second.free_node) {
 
-      assert(next->second.size == next->second.free_node->first);
+      assert(node->second.next == next);
+      assert(next->second.prev == node);
 
+      // Collapse next into node.
+      assert(node->second.size == node->second.free_node->first);
+      assert(next->second.size == next->second.free_node->first);
       node->second.size += next->second.size;
+      remove(next);
 
       free_nodes.erase(node->second.free_node);
       node->second.free_node = free_nodes.insert(
         std::make_pair(node->second.size, node)
-      ).first;
-
-      remove(next);
+      );
+      assert(node->second.size == node->second.free_node->first);
     }
-    printf("FREE DONE\n");
+    print_nodes();
   }
 };
 
@@ -249,8 +250,8 @@ int main(int argc, char** argv) {
 
   block_allocator_t alloc;
 
-  int count = 100;
-  int iterations = 1000;
+  int count =       1000000;
+  int iterations = 100000000;
   std::vector<void*> x(count);
 
   for(int i = 0; i < iterations; ++i) {
@@ -261,13 +262,11 @@ int main(int argc, char** argv) {
       alloc.free(x[index]);
       x[index] = nullptr;
     } else {
-      x[index] = alloc.allocate(rand() % 10000);
+      x[index] = alloc.allocate(rand() % 5000);
     }
 
-    printf("Iterations %5d  %lu %lu\n", i, alloc.allocated(), alloc.capacity());
-
-    printf("\n\n");
-
+    if(0 == i % 1000)
+      printf("Iterations %5d  %lu %lu\n", i, alloc.allocated(), alloc.capacity());
   }
 
   // Free all allocations.
