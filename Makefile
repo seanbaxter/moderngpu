@@ -4,9 +4,6 @@
 # Generate SASS for important minor versions.
 # Generate PTX for the last named architecture for future support.
 ARCH=\
-  -gencode arch=compute_20,code=compute_20 \
-  -gencode arch=compute_35,code=compute_35 \
-  -gencode arch=compute_52,code=compute_52 \
   -gencode arch=compute_52,code=sm_52
 
 
@@ -16,6 +13,9 @@ all: \
 	tests \
 	tutorials \
 	demos
+
+allocator: allocator.cxx
+	g++ -g -O0 -std=c++11 -o $@ $<
 
 # kernel tests
 tests: \
