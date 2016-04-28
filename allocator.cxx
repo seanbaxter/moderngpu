@@ -49,6 +49,14 @@ class block_allocator_t {
     nodes.erase(node);
   }
 
+  void change_key(node_it node) {
+    assert(free_nodes.end() != node->second.free_node);
+    free_nodes.erase(node->second.free_node);
+    node->second.free_node = free_nodes.insert(
+      std::make_pair(node->second.size, node)
+    );
+  }
+
 public:
 
   ~block_allocator_t() {
@@ -86,7 +94,6 @@ public:
   }
 
   void print_nodes() const {
-    return;
     validate_list();
   //  printf("%d nodes:\n", (int)nodes.size());
     for(const auto& n : nodes) {
@@ -199,50 +206,34 @@ public:
 
     // Put this node back in the free map.
     assert(free_nodes.end() == node->second.free_node);
-    node->second.free_node = free_nodes.insert(
-      std::make_pair(node->second.size, node)
-    );
-    
+
     node_it prev = node->second.prev;
     node_it next = node->second.next;
-    if(nodes.end() != prev &&
-      prev->second.chunk == chunk &&
-      free_nodes.end() != prev->second.free_node) {
 
-      // Prev guy is free. Collapse node into prev.
-      assert(prev->second.size == prev->second.free_node->first);
+    bool collapse_left = (nodes.end() != prev) && 
+      (prev->second.chunk == chunk) &&
+      (free_nodes.end() != prev->second.free_node);
+    bool collapse_right = (nodes.end() != next) &&
+      (next->second.chunk == chunk) &&
+      (free_nodes.end() != next->second.free_node);
 
+    if(collapse_left) {
       prev->second.size += node->second.size;
       remove(node);
-
-      free_nodes.erase(prev->second.free_node);
-      prev->second.free_node = free_nodes.insert(
-        std::make_pair(prev->second.size, prev)
-      );
-      node = prev;
-    }
-
-    print_nodes();
-    if(nodes.end() != next &&
-      next->second.chunk == chunk &&
-      free_nodes.end() != next->second.free_node) {
-
-      assert(node->second.next == next);
-      assert(next->second.prev == node);
-
-      // Collapse next into node.
-      assert(node->second.size == node->second.free_node->first);
-      assert(next->second.size == next->second.free_node->first);
-      node->second.size += next->second.size;
-      remove(next);
-
-      free_nodes.erase(node->second.free_node);
+      if(collapse_right) {
+        prev->second.size += next->second.size;
+        remove(next);
+      }
+      change_key(prev);
+    } else {
+      if(collapse_right) {
+        node->second.size += next->second.size;
+        remove(next);
+      }
       node->second.free_node = free_nodes.insert(
         std::make_pair(node->second.size, node)
       );
-      assert(node->second.size == node->second.free_node->first);
     }
-    print_nodes();
   }
 };
 
@@ -250,8 +241,8 @@ int main(int argc, char** argv) {
 
   block_allocator_t alloc;
 
-  int count =       1000000;
-  int iterations = 100000000;
+  int count =       10000;
+  int iterations = 1000000;
   std::vector<void*> x(count);
 
   for(int i = 0; i < iterations; ++i) {
