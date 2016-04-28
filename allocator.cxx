@@ -1,3 +1,4 @@
+// moderngpu copyright (c) 2016, Sean Baxter http://www.moderngpu.com
 #include <map>
 #include <list>
 #include <cassert>
@@ -32,6 +33,23 @@ class block_allocator_t {
   // Data for all nodes, indexed by address.
   std::map<char*, node_t> nodes;
 
+  void remove(node_it node) {
+    // Disconnect this node from the chain.
+    if(nodes.end() != node->second.next)
+      node->second.next->second.prev = node->second.prev;
+    if(nodes.end() != node->second.prev)
+      node->second.prev->second.next = node->second.next;
+
+    // Erase the free node.
+    if(free_nodes.end() != node->second.free_node) {
+      assert(node->second.free_node->first == node->second.size);
+      free_nodes.erase(node->second.free_node);
+    } else 
+      node->second.chunk->available += node->second.size;
+
+    // Erase the node.
+    nodes.erase(node);
+  }
 
 public:
 
@@ -56,16 +74,33 @@ public:
     return a;
   }
 
+  void validate_list() const {
+    
+    for(auto i = nodes.begin(); i != nodes.end(); ++ i) {
+      if(nodes.end() != i->second.prev) {
+        assert(i->second.prev->second.next == i);
+      }
+      if(nodes.end() != i->second.next) {
+        assert(i->second.next->second.prev == i);
+      }
+    }
+
+  }
+
   void print_nodes() const {
     
     printf("%d nodes:\n", (int)nodes.size());
     for(const auto& n : nodes) {
-      printf("%8lu : %p (%d)  (%8lu - %8lu)\n", n.second.size, n.first, 
+      printf("%8lu : %p (%d:%8lu)  (%8lu - %8lu)\n", n.second.size, n.first, 
         free_nodes.end() != n.second.free_node,
+        free_nodes.end() != n.second.free_node ? n.second.free_node->first : 0,
         n.second.prev != nodes.end() ? n.second.prev->second.size : 0,
         n.second.next != nodes.end() ? n.second.next->second.size : 0
+      );
 
-        );
+      if(free_nodes.end() != n.second.free_node) {
+        assert(n.second.free_node->first == n.second.size);
+      }
     }
     printf("%d free nodes:\n", (int)free_nodes.size());
     for(const auto& n : free_nodes)
@@ -75,6 +110,7 @@ public:
   }
 
   void* allocate(size_t size) {
+    validate_list();
     // TODO: align me.
     // TODO: look in the stream free list first.
     if(size < 4) size = 4;
@@ -97,6 +133,7 @@ public:
           chunk,
           nodes.end(), next, 
           chunk->available,
+          free_nodes.end()
          }
       )).first;
 
@@ -110,7 +147,6 @@ public:
     }
 
     node_it node = free_node->second;
-    assert(node->second.size <= (1<< 20));
     chunk_it chunk = node->second.chunk;
 
     // Set this node to allocated.
@@ -119,42 +155,40 @@ public:
 
     // Subtract the node's size from the available space.
     chunk->available -= node->second.size;
-    assert(chunk->available <= (1<< 20));
     
     // Split the allocated node into two nodes.
     size_t excess = node->second.size - size;
     if(excess >= 16) {
       // Update the sizing of the old node and chunk.
       node->second.size -= excess;
-      assert(node->second.size < (1<< 20));
       chunk->available += excess;
 
       // Create a new node from the end of the old one.
       node_it new_node = nodes.insert(std::make_pair(
         node->first + size,
         node_t {
-          node->second.chunk,
+          chunk,
           node, node->second.next,
-          excess
+          excess,
+          free_nodes.end()
         }
       )).first;
 
-      if(nodes.end() != node->second.next->second.prev)
+      if(nodes.end() != node->second.next)
         node->second.next->second.prev = new_node;
       node->second.next = new_node;
       new_node->second.free_node = 
         free_nodes.insert(std::make_pair(excess, new_node)).first;
     }
 
-    assert(node->second.size < 10000);
-
-
+    validate_list();
     printf("ALOC %8lu - %p\n", size, node->first);
 
     return node->first;
   }
 
   void free(void* p_) {
+    validate_list();
     char* p = static_cast<char*>(p_);
     node_it node = nodes.lower_bound(p);
     assert(nodes.end() != node);
@@ -162,11 +196,7 @@ public:
     printf("FREE %8lu - %p\n", node->second.size, node->first);
 
     chunk_it chunk = node->second.chunk;
-
-    assert(p < node->first + node->second.size);
-    assert(node->second.size < 10000);
     chunk->available += node->second.size;
-    assert(chunk->available <= (1<< 20));
 
     // Collapse this node with its neighbor to the left.
     node_it prev = node->second.prev;
@@ -174,23 +204,19 @@ public:
     if(nodes.end() != prev && 
       prev->second.chunk == chunk &&
       free_nodes.end() != prev->second.free_node) {
-      
+
+      assert(prev->second.size == prev->second.free_node->first);
+
       // The preceding node is in the same chunk and also free. Coalesce 
       // and erase this node.
-      prev->second.next = next;
       prev->second.size += node->second.size;
-
-      // Change the key of the free node.
       free_nodes.erase(prev->second.free_node);
       prev->second.free_node = free_nodes.insert(
         std::make_pair(prev->second.size, prev)
       ).first;
-  
-      assert(prev->second.size <= (1<< 20));
 
-      if(nodes.end() != next)
-        next->second.prev = prev;
-      nodes.erase(node);
+      node->second.size = 0;
+      remove(node);      
       node = prev;
     } else {
       node->second.free_node = free_nodes.insert(
@@ -202,24 +228,17 @@ public:
       next->second.chunk == chunk &&
       free_nodes.end() != next->second.free_node) {
 
-      assert(next->second.size <= (1<< 20));
-
-      // The next node is in the same chunk and also free. Coalesce and 
-      // erase that node.
-      if(nodes.end() != next->second.next)
-        next->second.next->second.prev = node;
-      node->second.next = next->second.next;
       node->second.size += next->second.size;
-      assert(node->second.size <= (1<< 20));
-      free_nodes.erase(next->second.free_node);
-      nodes.erase(next);
+      next->second.size = 0;
 
-      // Change the key of the free node.
       free_nodes.erase(node->second.free_node);
       node->second.free_node = free_nodes.insert(
         std::make_pair(node->second.size, node)
       ).first;
+
+      remove(next);
     }
+    validate_list();
   }
 };
 
