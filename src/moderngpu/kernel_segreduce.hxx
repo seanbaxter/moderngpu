@@ -315,7 +315,7 @@ void lbs_segreduce(func_t f, int count, segments_it segments,
     >
   >::type_t launch_t;
 
-  typedef typename tuple_iterator_value_t<tpl_t>::type_t value_t;
+  typedef tuple_iterator_value_t<tpl_t> value_t;
 
   cta_dim_t cta_dim = launch_t::cta_dim(context);
   int num_ctas = cta_dim.num_ctas(count + num_segments);

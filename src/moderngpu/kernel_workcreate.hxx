@@ -76,7 +76,7 @@ public:
     auto segments = this->segments;
     int num_segments = this->num_segments;
 
-    typedef typename tuple_iterator_value_t<tpl_t>::type_t value_t;
+    typedef tuple_iterator_value_t<tpl_t> value_t;
     auto upsweep_k = [=]MGPU_DEVICE(int tid, int cta) {
       typedef typename launch_t::sm_ptx params_t;
       enum { nt = params_t::nt, vt = params_t::vt, vt0 = params_t::vt0 };
@@ -167,7 +167,8 @@ public:
     mem_t<int> segments_result(num_dest_segments, context);
     int* segments_output = segments_result.data();
 
-    typedef typename tuple_iterator_value_t<tpl_t>::type_t value_t;
+   // typedef tuple_iterator_value_t<tpl_t> value_t;
+   // typedef tuple<int> value_t;
     auto downsweep_k = [=]MGPU_DEVICE(int tid, int cta, args_t... args) {
       typedef typename launch_t::sm_ptx params_t;
       enum { nt = params_t::nt, vt = params_t::vt, nv = nt * vt };
@@ -224,7 +225,7 @@ public:
           int rank = index - seg_begin;
 
           // Invoke the callback and the get the work-item count.
-          value_t cached = load_tuple(caching_iterators, seg);
+          tuple<int> cached = load(caching_iterators, seg);
           work_count = f(dest_seg, index, seg, rank, cached, args...);
         }
 

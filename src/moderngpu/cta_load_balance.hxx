@@ -188,7 +188,7 @@ namespace detail {
 
 template<int nv, typename value_t>
 struct cached_segment_load_storage_t {
-  enum { size = 8 }; //tuple_union_size_t<value_t>::value };
+  enum { size = tuple_union_size<value_t>::value };
   char bytes[size * (nv + 1)];
 };
 

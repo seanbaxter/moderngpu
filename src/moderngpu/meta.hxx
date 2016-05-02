@@ -101,11 +101,11 @@ MGPU_HOST_DEVICE constexpr size_t s_log2(size_t x, size_t p = 0) {
 
 // Apparently not defined by CUDA.
 template<typename real_t>
-MGPU_HOST_DEVICE real_t min(real_t a, real_t b) {
+MGPU_HOST_DEVICE constexpr real_t min(real_t a, real_t b) {
   return (b < a) ? b : a;
 }
 template<typename real_t>
-MGPU_HOST_DEVICE real_t max(real_t a, real_t b) {
+MGPU_HOST_DEVICE constexpr real_t max(real_t a, real_t b) {
   return (a < b) ? b : a;
 }
 

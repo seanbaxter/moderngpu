@@ -20,7 +20,7 @@ void transform_lbs(func_t f, int count, segments_it segments,
   >::type_t launch_t;
 
   typedef typename std::iterator_traits<segments_it>::value_type int_t;
-  typedef typename tuple_iterator_value_t<tpl_t>::type_t value_t;
+  typedef tuple_iterator_value_t<tpl_t> value_t;
 
   mem_t<int_t> mp = load_balance_partitions(count, segments, num_segments,
     launch_t::nv(context), context);

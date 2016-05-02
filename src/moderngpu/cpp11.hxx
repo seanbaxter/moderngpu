@@ -4,6 +4,7 @@
 
 BEGIN_MGPU_NAMESPACE
 
+
 template<typename type_t>
 MGPU_HOST_DEVICE type_t&& 
 forward(typename std::remove_reference<type_t>::type& a) noexcept {
@@ -16,6 +17,45 @@ move(type_t&& a) noexcept {
   typedef typename std::remove_reference<type_t>::type&& rval_t;
   return static_cast<rval_t>(a);
 }
+
+
+//////////
+// var_and
+
+template<bool... args_b>
+struct var_and;
+
+template<bool arg_a, bool... args_b> 
+struct var_and<arg_a, args_b...> {
+  enum { value = arg_a && var_and<args_b...>::value };
+};
+template<bool arg_a>
+struct var_and<arg_a> {
+  enum { value = arg_a };
+};
+template<>
+struct var_and<> {
+  enum { value = false };
+};
+
+//////////
+// var_or
+
+template<bool... args_b>
+struct var_or;
+
+template<bool arg_a, bool... args_b> 
+struct var_or<arg_a, args_b...> {
+  enum { value = arg_a || var_or<args_b...>::value };
+};
+template<bool arg_a>
+struct var_or<arg_a> {
+  enum { value = arg_a };
+};
+template<>
+struct var_or<> {
+  enum { value = true };
+};
 
 /////////////////
 // index_sequence
@@ -66,6 +106,18 @@ struct _tuple_impl;
 template<typename... args_t>
 struct tuple;
 
+////////////////
+// is_tuple_impl
+
+template<typename tpl>
+struct is_tuple {
+  enum { value = false };
+};
+template<size_t... seq_i, typename... args_t>
+struct is_tuple<tuple<index_sequence<seq_i...>, args_t...> > {
+  enum { value = true };
+};
+
 /////////////
 // tuple_size
 
@@ -77,6 +129,7 @@ template<typename... args_t>
 struct tuple_size<tuple<args_t...> > {
   enum { value = sizeof...(args_t) };
 };
+
 
 ////////////////
 // tuple_element
@@ -141,14 +194,12 @@ using tuple_element_t = typename tuple_element<i, tpl_t>::type;
 namespace detail {
 
 template<size_t i, typename arg_t>
-MGPU_HOST_DEVICE arg_t& 
-_get(_tuple_leaf<i, arg_t>& tpl) {
+MGPU_HOST_DEVICE arg_t& _get(_tuple_leaf<i, arg_t>& tpl) {
   return tpl.x;
 }
 
 template<size_t i, typename arg_t>
-MGPU_HOST_DEVICE const arg_t& 
-_get(const _tuple_leaf<i, arg_t>& tpl) {
+MGPU_HOST_DEVICE const arg_t& _get(const _tuple_leaf<i, arg_t>& tpl) {
   return tpl.x;
 }
 
@@ -247,11 +298,21 @@ struct _tuple_impl<index_sequence<seq_i...>, args_t...> :
   MGPU_HOST_DEVICE explicit _tuple_impl(const args_t&... args) :
     _tuple_leaf<seq_i, args_t>(args)... { }
 
+  // template<typename... args2_t,
+  //   typename = typename std::enable_if<
+  //     var_and<std::is_convertible<args_t, args2_t>::value...>::value>::type
+  // >>
   template<typename... args2_t,
     typename = typename std::enable_if<
-      sizeof...(args2_t) == sizeof...(args_t)>::type>
+      1 != sizeof...(args2_t) ||
+      var_and<std::is_same<
+        typename std::decay<args_t>::type, 
+        typename std::decay<args2_t>::type
+      >::value...>::value
+    >::type
+  >
   MGPU_HOST_DEVICE explicit _tuple_impl(args2_t&&... args) :
-    _tuple_leaf<seq_i, args2_t>(forward<args2_t>(args))... { }
+    _tuple_leaf<seq_i, args_t>(forward<args2_t>(args))... { }
 };
 
 } // namespace detail
@@ -294,13 +355,17 @@ struct tuple : detail::_tuple_impl<
 
   // const& args ctor.
   MGPU_HOST_DEVICE explicit tuple(const args_t&... args) : impl_t(args...) { }
-
-  // && args ctor.
-  template<typename... args2_t,
-    typename = typename std::enable_if<
-      sizeof...(args2_t) == sizeof...(args_t)>::type>
-  MGPU_HOST_DEVICE explicit tuple(args_t&&... args) : 
-    impl_t(forward<args_t>(args)...) { }
+   template<typename... args2_t,
+     typename = typename std::enable_if<
+       var_and<std::is_convertible<args_t, args2_t>::value...>::value>::type
+   >
+  // template<typename... args2_t,
+  //   typename = typename std::enable_if<
+  //     sizeof...(args_t) == sizeof...(args2_t) &&
+  //     !var_or<is_tuple_impl<typename std::decay<args2_t>::type>::value...>::value>::type
+  // >
+  MGPU_HOST_DEVICE tuple(args2_t&&... args) : 
+    impl_t(forward<args2_t>(args)...) { }
 };
 
 template<> struct tuple<> { };
@@ -350,22 +415,24 @@ using tuple_iterator_value_t = typename tuple_iterator_value<tpl_t>::type;
 // load and store to pointer tuples.
 
 namespace detail {
+
 template<typename... pointers_t, size_t... seq_i>
-MGPU_HOST_DEVICE auto _dereference(tuple<pointers_t...> pointers, 
+MGPU_HOST_DEVICE auto _lvalue_dereference(tuple<pointers_t...> pointers, 
   index_sequence<seq_i...> seq, size_t index) ->
   decltype(forward_as_tuple(get<seq_i>(pointers)[0]...)) {
 
   return forward_as_tuple(get<seq_i>(pointers)[index]...);
 }
+
 }
 
 // Returns lvalues for each of the dereferenced pointers in the tuple.
 template<typename... pointers_t>
 MGPU_HOST_DEVICE auto dereference(tuple<pointers_t...> pointers, 
-  size_t index) -> decltype(detail::_dereference(pointers, 
+  size_t index) -> decltype(detail::_lvalue_dereference(pointers, 
     make_index_sequence<sizeof...(pointers_t)>(), index)) {
 
-  return detail::_dereference(pointers, 
+  return detail::_lvalue_dereference(pointers, 
     make_index_sequence<sizeof...(pointers_t)>(), index);
 }
 
@@ -383,7 +450,6 @@ MGPU_HOST_DEVICE load(tuple<pointers_t...> pointers, size_t index) {
   typedef tuple_iterator_value<tuple<pointers_t...> > value_t;
   return value_t(dereference(pointers, index));
 }
-
 
 /////////////////////////////
 // Tuple comparison operators
@@ -442,6 +508,34 @@ template<typename... args_t>
 MGPU_HOST_DEVICE bool operator!=(tuple<args_t...> a, tuple<args_t...> b) {
   return !(a == b);
 }
+
+//////////////////////////////////////////////
+// Size of the largest component in the tuple.
+
+template<size_t... values>
+struct var_max;
+
+template<size_t value_, size_t... values_> 
+struct var_max<value_, values_...> {
+  constexpr static size_t value = max(value_, var_max<values_...>::value);
+};
+
+template<size_t value_>
+struct var_max<value_> {
+  constexpr static size_t value = value_;
+};
+
+template<> struct var_max<> {
+  constexpr static size_t value = 0;
+};
+
+template<typename tpl_t>
+struct tuple_union_size;
+
+template<typename... args_t>
+struct tuple_union_size<tuple<args_t...> > {
+  constexpr static size_t value = var_max<sizeof(args_t)...>::value;
+};
 
 END_MGPU_NAMESPACE
 
