@@ -12,6 +12,9 @@ ARCH=\
 
 OPTIONS=-std=c++11 -Xcompiler="-Wundef" -O0 -g -Xcompiler="-Werror" -lineinfo  --expt-extended-lambda -use_fast_math -Xptxas="-v" -I src
 
+cpp11: cpp11.cu src/moderngpu/*.hxx
+	nvcc $(ARCH) $(OPTIONS) -o $@ $<
+	
 all: \
 	tests \
 	tutorials \
