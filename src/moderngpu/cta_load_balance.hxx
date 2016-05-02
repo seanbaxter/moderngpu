@@ -188,14 +188,14 @@ namespace detail {
 
 template<int nv, typename value_t>
 struct cached_segment_load_storage_t {
-  enum { size = tuple_union_size_t<value_t>::value };
+  enum { size = 8 }; //tuple_union_size_t<value_t>::value };
   char bytes[size * (nv + 1)];
 };
 
 template<int i, int nt, int vt, typename tpl_t, 
   int size = tuple_size<tpl_t>::value>
 struct cached_segment_load_t {
-  typedef typename tuple_iterator_value_t<tpl_t>::type_t value_t;
+  typedef tuple_iterator_value_t<tpl_t> value_t;
   typedef cached_segment_load_storage_t<nt * vt, value_t> storage_t;
 
   MGPU_DEVICE static void load(int tid, range_t range,
