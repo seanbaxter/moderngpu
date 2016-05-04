@@ -4,21 +4,6 @@
 
 BEGIN_MGPU_NAMESPACE
 
-
-template<typename type_t>
-MGPU_HOST_DEVICE type_t&& 
-forward(typename std::remove_reference<type_t>::type& a) noexcept {
-  return static_cast<type_t&&>(a);
-} 
-
-template<typename type_t>
-MGPU_HOST_DEVICE typename std::remove_reference<type_t>::type&&
-move(type_t&& a) noexcept {
-  typedef typename std::remove_reference<type_t>::type&& rval_t;
-  return static_cast<rval_t>(a);
-}
-
-
 //////////
 // var_and
 
@@ -121,7 +106,6 @@ struct is_tuple<tuple<index_sequence<seq_i...>, args_t...> > {
 /////////////
 // tuple_size
 
-
 template<typename tpl_t>
 struct tuple_size;
 
@@ -203,11 +187,19 @@ MGPU_HOST_DEVICE const arg_t& _get(const _tuple_leaf<i, arg_t>& tpl) {
   return tpl.x;
 }
 
+template<size_t i, typename arg_t>
+MGPU_HOST_DEVICE arg_t&& _get(_tuple_leaf<i, arg_t>&& tpl) {
+  return tpl.x;
+}
+
 } // detail
 
 template<size_t i, typename... args_t>
 MGPU_HOST_DEVICE tuple_element_t<i, tuple<args_t...> >&
 get(tuple<args_t...>& tpl) {
+  typedef typename tuple_element<
+
+  
   return detail::_get<i>(tpl);
 }
 
@@ -220,7 +212,7 @@ get(const tuple<args_t...>& tpl) {
 template<size_t i, typename... args_t>
 MGPU_HOST_DEVICE tuple_element_t<i, tuple<args_t...> >&&
 get(tuple<args_t...>&& tpl) {
-  return forward<tuple_element_t<i, tuple<args_t...> > >(tpl);
+  return detail::_get<i>(forward<tuple<args_t...> >(tpl));
 }
 
 ////////
