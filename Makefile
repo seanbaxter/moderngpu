@@ -7,10 +7,10 @@ ARCH=\
   -gencode arch=compute_52,code=sm_52
 
 
-OPTIONS=-std=c++11 -Xcompiler="-Wundef" -O2 -g -Xcompiler="-Werror" -lineinfo  --expt-extended-lambda -use_fast_math -Xptxas="-v" -I src
+OPTIONS=-std=c++11 -Xcompiler="-Wundef" -O0 -g -Xcompiler="-Werror" -lineinfo  --expt-extended-lambda -use_fast_math -Xptxas="-v" -I src
 
-cpp11: cpp11.cxx src/moderngpu/*.hxx
-	g++ -std=c++11 -I src -g -O0 -o $@ $<
+cpp11: cpp11.cu src/moderngpu/*.hxx
+	nvcc $(ARCH) $(OPTIONS) -o $@ $<
 
 all: \
 	tests \
