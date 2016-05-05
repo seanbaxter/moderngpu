@@ -12,6 +12,9 @@ OPTIONS=-std=c++11 -Xcompiler="-Wundef" -O0 -g -Xcompiler="-Werror" -lineinfo  -
 cpp11: cpp11.cu src/moderngpu/*.hxx
 	nvcc $(ARCH) $(OPTIONS) -o $@ $<
 
+tuple: tuple.cu 
+	nvcc -std=c++11 --expt-extended-lambda -O0 -g -o $@ $< 
+
 all: \
 	tests \
 	tutorials \

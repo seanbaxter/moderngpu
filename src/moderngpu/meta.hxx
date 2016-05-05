@@ -111,6 +111,9 @@ MGPU_HOST_DEVICE constexpr real_t max(real_t a, real_t b) {
 
 struct empty_t { };
 
+template<typename... args_t>
+MGPU_HOST_DEVICE void swallow(args_t...) { }
+
 template<typename... base_v>
 struct inherit_t;
 

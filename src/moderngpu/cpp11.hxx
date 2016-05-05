@@ -175,44 +175,25 @@ using tuple_element_t = typename tuple_element<i, tpl_t>::type;
 //////
 // get
 
-namespace detail {
-
-template<size_t i, typename arg_t>
-MGPU_HOST_DEVICE arg_t& _get(_tuple_leaf<i, arg_t>& tpl) {
-  return tpl.x;
-}
-
-template<size_t i, typename arg_t>
-MGPU_HOST_DEVICE const arg_t& _get(const _tuple_leaf<i, arg_t>& tpl) {
-  return tpl.x;
-}
-
-template<size_t i, typename arg_t>
-MGPU_HOST_DEVICE arg_t&& _get(_tuple_leaf<i, arg_t>&& tpl) {
-  return tpl.x;
-}
-
-} // detail
-
 template<size_t i, typename... args_t>
 MGPU_HOST_DEVICE tuple_element_t<i, tuple<args_t...> >&
 get(tuple<args_t...>& tpl) {
-  typedef typename tuple_element<
-
-  
-  return detail::_get<i>(tpl);
+  typedef detail::_tuple_leaf<i, tuple_element_t<i, tuple<args_t...> > > leaf_t;
+  return static_cast<leaf_t&>(tpl).x;
 }
 
 template<size_t i, typename... args_t>
 MGPU_HOST_DEVICE const tuple_element_t<i, tuple<args_t...> >&
 get(const tuple<args_t...>& tpl) {
-  return detail::_get<i>(tpl);
+  typedef detail::_tuple_leaf<i, tuple_element_t<i, tuple<args_t...> > > leaf_t;
+  return static_cast<const leaf_t&>(tpl).x;
 }
 
 template<size_t i, typename... args_t>
 MGPU_HOST_DEVICE tuple_element_t<i, tuple<args_t...> >&&
 get(tuple<args_t...>&& tpl) {
-  return detail::_get<i>(forward<tuple<args_t...> >(tpl));
+  typedef detail::_tuple_leaf<i, tuple_element_t<i, tuple<args_t...> > > leaf_t;
+  return std::forward<leaf_t>(tpl).x;
 }
 
 ////////
@@ -241,8 +222,17 @@ struct _tuple_leaf {
   MGPU_HOST_DEVICE _tuple_leaf(const arg2_t& y) : x(y) { }
 
   template<typename arg2_t>
-  MGPU_HOST_DEVICE _tuple_leaf(arg2_t&& y) : x(forward<arg2_t>(y)) { }
+  MGPU_HOST_DEVICE _tuple_leaf(arg2_t&& y) : x(std::forward<arg2_t>(y)) { }
 };
+
+template<size_t i, typename arg_t>
+MGPU_HOST_DEVICE detail::_tuple_leaf<i, arg_t>& 
+_get(_tuple_leaf<i, arg_t>& tpl) { return tpl; }
+
+template<size_t i, typename arg_t>
+MGPU_HOST_DEVICE const detail::_tuple_leaf<i, arg_t>& 
+_get(const _tuple_leaf<i, arg_t>& tpl) { return tpl; }
+
 
 template<size_t... seq_i, typename... args_t>
 struct _tuple_impl<index_sequence<seq_i...>, args_t...> :
@@ -264,7 +254,7 @@ struct _tuple_impl<index_sequence<seq_i...>, args_t...> :
   template<typename... args2_t>
   MGPU_HOST_DEVICE _tuple_impl(_tuple_impl<seq_t, args2_t...>&& tpl) :
     _tuple_leaf<seq_i, args_t>(
-      forward<_tuple_leaf<seq_i, args2_t> >(tpl))... { }
+      std::forward<_tuple_leaf<seq_i, args2_t> >(tpl))... { }
 
   template<typename... args2_t>
   MGPU_HOST_DEVICE _tuple_impl& operator=(const _tuple_impl<args2_t...>& tpl) {
@@ -276,9 +266,10 @@ struct _tuple_impl<index_sequence<seq_i...>, args_t...> :
 
   template<typename... args2_t>
   MGPU_HOST_DEVICE _tuple_impl& operator=(_tuple_impl<args2_t...>&& tpl) {
+    swallow(_get<)
     int f[] = {
       (_get<seq_i>(*this) = 
-        forward<tuple_element_t<seq_i, _tuple_impl<args2_t...> > >(
+        std::forward<tuple_element_t<seq_i, _tuple_impl<args2_t...> > >(
           _get<seq_i>(tpl)
         ), 
       0)...
