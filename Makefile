@@ -15,6 +15,12 @@ cpp11: cpp11.cu src/moderngpu/*.hxx
 tuple2: tuple.cu 
 	nvcc -arch sm_52 -Xptxas="-v" -std=c++11 -I src/ --expt-extended-lambda -O2 -g -o $@ $< 
 
+tuple_test: tuple_test.cu 
+	nvcc -arch sm_52 -Xptxas="-v" -std=c++11 -I src/ --expt-extended-lambda -O0 -g -o $@ $< 
+
+tuple_test_cxx: tuple_test.cxx
+	g++ -std=c++11 -I src/ -O0 -g -o $@ $<
+
 all: \
 	tests \
 	tutorials \

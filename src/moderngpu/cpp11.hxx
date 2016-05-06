@@ -444,16 +444,16 @@ MGPU_HOST_DEVICE auto dereference(tuple<pointers_t...> pointers,
 
 template<typename... pointers_t>
 MGPU_HOST_DEVICE void store(tuple<pointers_t...> pointers, 
-  tuple_iterator_value<tuple<pointers_t...> > values, 
+  tuple_iterator_value_t<tuple<pointers_t...> > values, 
   size_t index) {
 
   dereference(pointers, index) = values;
 }
 
 template<typename... pointers_t>
-tuple_iterator_value<tuple<pointers_t...> > 
+tuple_iterator_value_t<tuple<pointers_t...> > 
 MGPU_HOST_DEVICE load(tuple<pointers_t...> pointers, size_t index) {
-  typedef tuple_iterator_value<tuple<pointers_t...> > value_t;
+  typedef tuple_iterator_value_t<tuple<pointers_t...> > value_t;
   return value_t(dereference(pointers, index));
 }
 
