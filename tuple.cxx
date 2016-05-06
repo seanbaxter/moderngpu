@@ -2,7 +2,11 @@
 #include <type_traits>
 #include <utility>
 
+#ifdef __CUDACC__
+#define MGPU_HOST_DEVICE __host__ __device__
+#else
 #define MGPU_HOST_DEVICE
+#endif
 
 template<typename type_t>
 using decay_t = typename std::decay<type_t>::type;
@@ -342,12 +346,22 @@ struct _first_type {
   typedef tpl_t type;
 };
 
+template<typename... tpls_t>
+struct _first_seq;
+
+template<> struct _first_seq<> {
+  typedef make_index_sequence<0> type;
+};
+template<typename tpl_t, typename... tpls_t>
+struct _first_seq<tpl_t, tpls_t...> {
+  enum { size = tuple_size<typename _make_tuple<tpl_t>::type>::value };
+  typedef make_index_sequence<size> type;
+};
+
 template<typename ret_t, size_t... seq_i, typename tuple1_t, 
   typename... tuples_t>
 struct _tuple_cat<ret_t, index_sequence<seq_i...>, tuple1_t, tuples_t...> {
-  typedef typename _first_type<tuples_t...>::type next_t;
-  enum { next_size = tuple_size<typename _make_tuple<next_t>::type>::value };
-  typedef make_index_sequence<next_size> next_seq;
+  typedef typename _first_seq<tuples_t...>::type next_seq;
 
   template<typename... pass_t> MGPU_HOST_DEVICE 
   static ret_t go(tuple1_t&& tpl, tuples_t&&... tpls, pass_t&&... pass) {
@@ -360,13 +374,12 @@ struct _tuple_cat<ret_t, index_sequence<seq_i...>, tuple1_t, tuples_t...> {
   }
 };
 
-template<typename ret_t, size_t... seq_i, typename tuple_t>
-struct _tuple_cat<ret_t, index_sequence<seq_i...>, tuple_t> {
+template<typename ret_t>
+struct _tuple_cat<ret_t, index_sequence<> > {
   template<typename... pass_t> MGPU_HOST_DEVICE 
-  static ret_t go(tuple_t&& tpl, pass_t&&... pass) {
+  static ret_t go(pass_t&&... pass) {
     return make_tuple(
-      std::forward<pass_t>(pass)...,
-      get<seq_i>(std::forward<tuple_t>(tpl))...
+      std::forward<pass_t>(pass)...
     );
   }
 };
@@ -392,10 +405,15 @@ struct decay_equiv {
   enum { value = std::is_same<typename std::decay<t>::type, u>::value };
 };
 
-
-
-
 typedef tuple<int, int, int, int> tuple_t;
+
+#ifdef __CUDACC__
+extern "C" __global__ void gpu_copy(const tuple_t* input, tuple_t* output) {
+  int tid = threadIdx.x;
+  output[tid] = input[tid];
+}
+#endif
+
 
 extern "C" void cpu_copy(const tuple_t* input, tuple_t* output, size_t index) {
   output[index] = input[index];
@@ -414,10 +432,8 @@ int main(int argc, char** argv) {
   q = z;
   q = foo;
 
-  tuple<int> a;
-  tuple<float> b;
-  auto cat = tuple_cat(tuple<int>(5), tuple<int>(10));
-  printf("%d %d\n", get<0>(cat), get<1>(cat));
+  auto cat = tuple_cat(tuple<int>(5), tuple<float>(3.1f), tuple<double>(19.1));
+  printf("%d %f %f\n", get<0>(cat), get<1>(cat), get<2>(cat));
 
   printf("%p %p %p\n", get<0>(foo), get<1>(foo), get<2>(foo));
   printf("%p %p %p\n", get<0>(z), get<1>(z), get<2>(z));
