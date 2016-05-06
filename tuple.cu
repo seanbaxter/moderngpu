@@ -390,8 +390,9 @@ tuple_cat(tpl1_t&& tpl1, tpl2_t&& tpl2, tpls_t&&... tpls) {
 
 
 int main(int argc, char** argv) {
-  auto cat = tuple_cat(tuple<int>(5), tuple<float>(3.1f), tuple<double>(18.1));
-  printf("%d %f %f\n", get<0>(cat), get<1>(cat), get<2>(cat));
+  tuple<char> letter('f');
+  auto cat = tuple_cat(tuple<int>(5), tuple<float>(3.1f), letter, tuple<double>(18.1));
+  printf("%d %f %c %f\n", get<0>(cat), get<1>(cat), get<2>(cat), get<3>(cat));
 
   return 0;
 }
