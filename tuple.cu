@@ -1,8 +1,7 @@
 #include <cstdio>
 #include <type_traits>
 #include <utility>
-
-#define MGPU_HOST_DEVICE
+#include <moderngpu/meta.hxx>
 
 template<typename type_t>
 using decay_t = typename std::decay<type_t>::type;
@@ -396,6 +395,10 @@ struct decay_equiv {
 
 
 typedef tuple<int, int, int, int> tuple_t;
+
+extern "C" void gpu_copy(const tuple_t* input, tuple_t* output, size_t index) {
+  output[index] = input[index];
+}
 
 extern "C" void cpu_copy(const tuple_t* input, tuple_t* output, size_t index) {
   output[index] = input[index];
