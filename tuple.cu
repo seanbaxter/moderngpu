@@ -3,7 +3,7 @@
 #include <utility>
 
 #ifdef __CUDACC__
-#define MGPU_HOST_DEVICE //__host__ __device__
+#define MGPU_HOST_DEVICE __host__ __device__
 #else
 #define MGPU_HOST_DEVICE
 #endif
@@ -338,115 +338,60 @@ struct _tuple_cat_ret {
   >::type type;
 };
 
-template<typename seq_t, typename... tuples_t>
+template<typename tpl1_t, typename seq1_t, typename tpl2_t, typename seq2_t>
 struct _tuple_cat;
 
-template<typename tpl_t, typename... tpls_t>
-struct _first_type {
-  typedef tpl_t type;
-};
+template<typename tpl1_t, size_t... seq1_i, typename tpl2_t, size_t... seq2_i>
+struct _tuple_cat<tpl1_t, index_sequence<seq1_i...>, 
+  tpl2_t, index_sequence<seq2_i...> > {
 
-template<typename... tpls_t>
-struct _first_seq;
+  typedef typename _tuple_cat_ret<tpl1_t, tpl2_t>::type ret_t;
 
-template<> struct _first_seq<> {
-  typedef make_index_sequence<0> type;
-};
-template<typename tpl_t, typename... tpls_t>
-struct _first_seq<tpl_t, tpls_t...> {
-  enum { size = tuple_size<typename _make_tuple<tpl_t>::type>::value };
-  typedef make_index_sequence<size> type;
-};
-
-template<typename ret_t, size_t... seq_i, typename tuple1_t, 
-  typename... tuples_t>
-struct _tuple_cat<ret_t, index_sequence<seq_i...>, tuple1_t, tuples_t...> {
-  typedef typename _first_seq<tuples_t...>::type next_seq;
-
-  template<typename... pass_t> MGPU_HOST_DEVICE 
-  static ret_t go(tuple1_t&& tpl, tuples_t&&... tpls, pass_t&&... pass) {
-    // Unpack these terms and recursively call go.
-    return _tuple_cat<ret_t, next_seq, tuples_t...>::go(
-      std::forward<tuples_t>(tpls)..., 
-      std::forward<pass_t>(pass)...,
-      get<seq_i>(std::forward<tuple1_t>(tpl))...
-    );
-  }
-};
-
-template<typename ret_t>
-struct _tuple_cat<ret_t, index_sequence<> > {
-  template<typename... pass_t> MGPU_HOST_DEVICE 
-  static ret_t go(pass_t&&... pass) {
+  MGPU_HOST_DEVICE static ret_t cat(tpl1_t&& tpl1, tpl2_t&& tpl2) {
     return make_tuple(
-      std::forward<pass_t>(pass)...
+      get<seq1_i>(std::forward<tpl1_t>(tpl1))...,
+      get<seq2_i>(std::forward<tpl2_t>(tpl2))...
     );
   }
 };
 
 }
 
-template<typename... tuples_t> MGPU_HOST_DEVICE
-typename detail::_combine_type<
-  typename std::remove_reference<tuples_t>::type...
->::type
-tuple_cat(tuples_t&&... tpls) {
-  typedef typename detail::_first_type<tuples_t...>::type next_t;
-  enum { next_size = tuple_size<typename detail::_make_tuple<next_t>::type>::value };
-  typedef make_index_sequence<next_size> next_seq;
 
-  typedef typename detail::_tuple_cat_ret<tuples_t...>::type ret_t;
-  return detail::_tuple_cat<ret_t, next_seq, tuples_t...>::go(
-    std::forward<tuples_t>(tpls)...);
+template<typename tpl1_t> MGPU_HOST_DEVICE
+typename detail::_tuple_cat_ret<tpl1_t>::type
+tuple_cat(tpl1_t&& tpl1) {
+  return std::forward<tpl1_t>(tpl1);
 }
 
-template<typename t, typename u>
-struct decay_equiv {
-  enum { value = std::is_same<typename std::decay<t>::type, u>::value };
-};
+template<typename tpl1_t, typename tpl2_t, typename... tpls_t> MGPU_HOST_DEVICE
+typename detail::_tuple_cat_ret<tpl1_t, tpl2_t, tpls_t...>::type
+tuple_cat(tpl1_t&& tpl1, tpl2_t&& tpl2, tpls_t&&... tpls) {
+  typedef typename detail::_make_tuple<tpl1_t>::type tpl1_stripped;
+  typedef typename detail::_make_tuple<tpl2_t>::type tpl2_stripped;
 
-typedef tuple<int, int, int, int> tuple_t;
+  enum { 
+    size1 = tuple_size<tpl1_stripped>::value, 
+    size2 = tuple_size<tpl2_stripped>::value
+  };
 
-#ifdef __CUDACC__
-extern "C" __global__ void gpu_copy(const tuple_t* input, tuple_t* output) {
-  int tid = threadIdx.x;
-  output[tid] = input[tid];
+  return tuple_cat(
+    detail::_tuple_cat<
+      tpl1_t, make_index_sequence<size1>, 
+      tpl2_t, make_index_sequence<size2> 
+    >::cat(
+      std::forward<tpl1_t>(tpl1), 
+      std::forward<tpl2_t>(tpl2)
+    ), 
+    std::forward<tpls_t>(tpls)...
+  );
 }
-#endif
 
 
-extern "C" void cpu_copy(const tuple_t* input, tuple_t* output, size_t index) {
-  output[index] = input[index];
-}
 
 int main(int argc, char** argv) {
-  int i[] = { 0, 1, 2, 3, 4 };
-  double d[] = { 0.1, 1.1, 2.1, 3.1, 4.1 };
-  float f[] = { 0.2f, 1.2f, 2.2f, 3.2f, 4.2f };
-
-  auto foo = forward_as_tuple(i, d, f);
-  tuple<int*, double*, float*> z = foo;
-
-  tuple<int*, double*, float*> q = z;
-  q = foo;
-  q = z;
-  q = foo;
-
-  auto cat = tuple_cat(tuple<int>(5), tuple<float>(3.1f), tuple<double>(19.1));
+  auto cat = tuple_cat(tuple<int>(5), tuple<float>(3.1f), tuple<double>(18.1));
   printf("%d %f %f\n", get<0>(cat), get<1>(cat), get<2>(cat));
 
-  printf("%p %p %p\n", get<0>(foo), get<1>(foo), get<2>(foo));
-  printf("%p %p %p\n", get<0>(z), get<1>(z), get<2>(z));
-
-  /*()
-  tuple<int*, double*, float*> x = make_tuple(i, d, f);
-  tuple<int*, double*, float*> y = tuple<int*, double*, float*>();
-  y = x;\
-
-  printf("%lu\n", sizeof(foo));
-
-  printf("%p %p %p \n", get<0>(x), get<1>(x), get<2>(x));
-**/
- // printf("%x %x %x\n", get<0>(x), get<1>(x), get<2>(x));
   return 0;
 }
