@@ -4,22 +4,12 @@
 # Generate SASS for important minor versions.
 # Generate PTX for the last named architecture for future support.
 ARCH=\
+  -gencode arch=compute_20,code=compute_20 \
+  -gencode arch=compute_35,code=compute_35 \
+  -gencode arch=compute_52,code=compute_52 \
   -gencode arch=compute_52,code=sm_52
 
-
-OPTIONS=-std=c++11 -Xcompiler="-Wundef" -O0 -g -Xcompiler="-Werror" -lineinfo  --expt-extended-lambda -use_fast_math -Xptxas="-v" -I src
-
-cpp11: cpp11.cu src/moderngpu/*.hxx
-	nvcc $(ARCH) $(OPTIONS) -o $@ $<
-
-tuple2: tuple.cu 
-	nvcc -arch sm_52 -Xptxas="-v" -std=c++11 -I src/ --expt-extended-lambda -O2 -g -o $@ $< 
-
-tuple_test: tuple_test.cu 
-	nvcc -arch sm_52 -Xptxas="-v" -std=c++11 -I src/ --expt-extended-lambda -O0 -g -o $@ $< 
-
-tuple_test_cxx: tuple_test.cxx
-	g++ -std=c++11 -I src/ -O0 -g -o $@ $<
+OPTIONS=-std=c++11 -Xcompiler="-Wundef" -O2 -g -Xcompiler="-Werror" -lineinfo  --expt-extended-lambda -use_fast_math -Xptxas="-v" -I src
 
 all: \
 	tests \

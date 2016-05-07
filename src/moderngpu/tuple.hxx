@@ -1,7 +1,7 @@
 // moderngpu copyright (c) 2016, Sean Baxter http://www.moderngpu.com
 #pragma once
 
-#include <meta.hxx>
+#include "meta.hxx"
 
 BEGIN_MGPU_NAMESPACE
 
@@ -170,7 +170,7 @@ struct tuple_impl<i, arg_t, args_t...> :
   typedef tuple_impl<i + 1, args_t...> tail_t;
 
   MGPU_HOST_DEVICE  arg_t& head() { return head_t::get(); }
-   MGPU_HOST_DEVICE const arg_t& head() const { return head_t::get(); }
+  MGPU_HOST_DEVICE const arg_t& head() const { return head_t::get(); }
 
   MGPU_HOST_DEVICE  tail_t& tail() { return *this; }
   MGPU_HOST_DEVICE  const tail_t& tail() const { return *this; }
@@ -264,7 +264,7 @@ arg_t& _get(tuple_leaf<i, arg_t>& leaf) {
 
 template<size_t i, typename arg_t> MGPU_HOST_DEVICE 
 const arg_t& _get(const tuple_leaf<i, arg_t>& leaf) {
-  return leaf.const_get();
+  return leaf.get();
 }
 
 }
