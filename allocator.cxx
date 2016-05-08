@@ -28,6 +28,7 @@ class block_allocator_t {
   std::list<chunk_t> chunks;
 
   // Sort free nodes by size.
+  std::multimap<size_t, node_it> zero_nodes;
   std::multimap<size_t, node_it> free_nodes;
 
   // Data for all nodes, indexed by address.
@@ -55,6 +56,13 @@ class block_allocator_t {
     );
   }
 
+
+
+protected:
+  virtual void* block_allocate(size_t size) = 0;
+  virtual void block_free(void* p) = 0;
+  virtual void block_zero(void* p, size_t size) = 0;
+
 public:
 
   struct usage_t {
@@ -66,13 +74,7 @@ public:
 
   ~block_allocator_t() {
     assert(free_nodes.size() == chunks.size());
-    while(chunks.size()) {
-      chunk_it chunk = chunks.begin();
-      printf("free(%p) on %lu bytes\n", chunk->p, chunk->capacity);
-      free(chunk->p);
-      chunk->p = nullptr;
-      chunks.erase(chunk);
-    }
+    slim();
   }
 
   usage_t usage() const {
@@ -89,6 +91,36 @@ public:
     return u;
   }
 
+  // de-allocate all free blocks.
+  void slim() {
+    for(auto chunk = chunks.begin(); chunk != chunks.end(); ) {
+      auto next = std::next(chunk);
+
+        // This is a free chunk. Remove it.
+      if(chunk->available == chunk->capacity) {
+        node_it node = nodes.find(chunk->p);
+
+        // Remove it from the free map and the nodes map.
+        remove(node);
+
+        // De-allocate the block memory.
+        block_free(chunk->p);
+        chunk->p = nullptr;
+        chunks.erase(chunk);
+      }
+      chunk = next;
+    }
+  }
+
+  void* allocate_zero(size_t size) {
+    // Allocate from zero memory.
+    auto zero_node = zero_nodes.lower_bound(size);
+
+
+  }
+
+  // return pointer,size to next part.
+  // add lhs to managed memory.
   void* allocate(size_t size) {
     // TODO: align me.
     // TODO: look in the stream free list first.
@@ -101,7 +133,7 @@ public:
         chunk_t {
           alloc_size, 
           alloc_size, 
-          (char*)malloc(alloc_size)
+          (char*)block_allocate(size)
         }
       );
       printf("ALLOCATED %p\n", chunk->p);
@@ -198,6 +230,67 @@ public:
     }
   }
 };
+
+class device_allocator_t : block_allocator_t {
+protected:
+  virtual void* block_allocate(size_t size) {
+    void* p;
+    cudaResult_t result = cudaMalloc(&p, size);
+    if(cudaSuccess != result) throw cuda_exception_t(result);
+    return p;
+  }
+  
+  virtual void block_free(void* p) {
+    cudaResult_t result = cudaFree(p);
+    if(cudaSuccess != result) throw cuda_exception_t(result);
+  }
+
+  virtual void block_zero(void* p, size_t size) {
+    cudaMemset(p, 0, size);
+  }
+};
+
+class host_allocator_t : block_allocator_t {
+protected:
+  virtual void* block_allocate(size_t size) {
+    void* p;
+    cudaResult_t result = cudaMallocHost(&p, size);
+    if(cudaSuccess != result) throw cuda_exception_t(result);
+    return p;
+  }
+  
+  virtual void block_free(void* p) {
+    cudaResult_t result = cudaFreeHost(p);
+    if(cudaSuccess != result) throw cuda_exception_t(result);
+  }
+
+  virtual void block_zero(void* p, size_t size) {
+    memset(p, 0, size);
+  }  
+};
+
+#if 0
+  // Alloc GPU memory.
+  virtual void* alloc(size_t size, memory_space_t space) {
+    void* p = nullptr;
+    if(size) {
+      cudaError_t result = (memory_space_device == space) ? 
+        cudaMalloc(&p, size) :
+        cudaMallocHost(&p, size);
+      if(cudaSuccess != result) throw cuda_exception_t(result);
+    }
+    return p;    
+  }
+
+  virtual void free(void* p, memory_space_t space) {
+    if(p) {
+      cudaError_t result = (memory_space_device == space) ? 
+        cudaFree(p) :
+        cudaFreeHost(p);
+      if(cudaSuccess != result) throw cuda_exception_t(result);
+    }
+  }
+#endif
 
 int main(int argc, char** argv) {
   {
