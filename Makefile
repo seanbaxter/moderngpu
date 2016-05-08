@@ -15,7 +15,7 @@ all: \
 
 allocator: allocator.cu
 	nvcc $(ARCH) $(OPTIONS) -o $@ $<
-
+	
 # kernel tests
 tests: \
 	test_reduce \
