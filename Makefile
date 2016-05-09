@@ -8,6 +8,7 @@ ARCH=\
 
 OPTIONS=-std=c++11 -Xcompiler="-Wundef" -O0 -g -Xcompiler="-Werror" -lineinfo  --expt-extended-lambda -use_fast_math -Xptxas="-v" -I src
 
+
 all: \
 	tests \
 	tutorials \
