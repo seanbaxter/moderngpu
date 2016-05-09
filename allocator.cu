@@ -18,7 +18,6 @@ class block_allocator_t {
 
   struct node_t {
     chunk_it chunk;
-    size_t size;
     std::multimap<size_t, node_it>::iterator free_node;
   };
 
@@ -38,6 +37,14 @@ class block_allocator_t {
   // Data for all nodes, indexed by address.
   std::map<char*, node_t> nodes;
 
+  size_t node_size(node_it node) const {
+    chunk_it chunk = node->second.chunk;
+    node_it next = std::next(node);
+    const char* end = (nodes.end() != next && chunk == next->second.chunk) ?
+      next->first : chunk->p + chunk->capacity;
+    return end - node->first;
+  }
+
   void remove(node_it node) {
     // Erase the free node.
     if(free_nodes.end() != node->second.free_node)
@@ -51,7 +58,7 @@ class block_allocator_t {
     remove_free(node);
 
     node->second.free_node = free_nodes.insert(
-      std::make_pair(node->second.size, node)
+      std::make_pair(node_size(node), node)
     );
     return node->second.free_node;
   }
@@ -73,18 +80,17 @@ class block_allocator_t {
     );
 
     // Insert and link this node to the next node.
-    node_it node = insert(chunk, chunk->p, chunk->available);
+    node_it node = insert(chunk, chunk->p);
 
     // Add the node to the free list.
     return set_free(node);
   }
 
-  node_it insert(chunk_it chunk, char* p, size_t size) {
+  node_it insert(chunk_it chunk, char* p) {
     return nodes.insert(std::make_pair(
       p, 
       node_t {
         chunk,
-        size,
         free_nodes.end()
       }
     )).first;
@@ -163,17 +169,16 @@ public:
     remove_free(node);
 
     // Subtract the node's size from the available space.
-    chunk->available -= node->second.size;
+    chunk->available -= node_size(node);
     
     // Split the allocated node into two nodes.
-    size_t excess = node->second.size - size;
+    size_t excess = node_size(node) - size;
     if(excess >= 16) {
       // Update the sizing of the old node and chunk.
-      node->second.size -= excess;
       chunk->available += excess;
 
       // Create a new node from the end of the old one.
-      node_it new_node = insert(chunk, node->first + size, excess);
+      node_it new_node = insert(chunk, node->first + size);
 
       // Add the new node to the free list.
       set_free(new_node);
@@ -187,7 +192,7 @@ public:
     node_it node = nodes.lower_bound(p);
 
     chunk_it chunk = node->second.chunk;
-    chunk->available += node->second.size;
+    chunk->available += node_size(node);
 
     // Collapse this node into the left.
     node_it prev = std::prev(node);
@@ -198,14 +203,10 @@ public:
       free_nodes.end() != next->second.free_node;
 
     if(prev_free) {
-      prev->second.size += node->second.size;
-      node->second.size = 0;
       remove(node);
       node = prev;
     }
     if(next_free) {
-      node->second.size += next->second.size;
-      next->second.size = 0;
       remove(next);
     }
 
@@ -266,8 +267,8 @@ int main(int argc, char** argv) {
   {
     mgpu::host_allocator_t alloc;
 
-    int count =       10000;
-    int iterations = 1000000;
+    int count =       1000000;
+    int iterations = 10000000;
     std::vector<void*> x(count);
 
     int alloc_count = 0;
