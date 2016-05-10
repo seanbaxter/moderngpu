@@ -11,6 +11,8 @@ BEGIN_MGPU_NAMESPACE
 class block_allocator_t {
   enum { block_size = 4<< 20 };   // typical allocation size.
 
+  enum : size_t { dirty = (size_t)-1, zero = (size_t)-2, used = (size_t)-3 };
+
   struct node_t;
   struct chunk_t;
 
@@ -20,7 +22,7 @@ class block_allocator_t {
 
   struct node_t {
     chunk_it chunk;
-    int free_buffer;
+    size_t stream;
     std::multimap<size_t, node_it>::iterator free_node;
   };
 
@@ -34,7 +36,7 @@ class block_allocator_t {
   std::list<chunk_t> chunks;
 
   // Sort free nodes by size.
-  std::multimap<size_t, node_it> free_nodes[2];
+  std::map<size_t, std::multimap<size_t, node_it> > free_nodes;
 
   // Data for all nodes, indexed by address.
   std::map<char*, node_t> nodes;
@@ -52,26 +54,26 @@ class block_allocator_t {
     nodes.erase(node);
   }
 
-  free_it set_free(node_it node, int buffer = 0) {
+  free_it set_free(node_it node, size_t stream = dirty) {
     remove_free(node);
 
-    node->second.free_node = free_nodes[buffer].insert(
+    node->second.free_node = free_nodes[stream].insert(
       std::make_pair(node_size(node), node)
     );
-    node->second.free_buffer = buffer;
+    node->second.stream = stream;
     return node->second.free_node;
   }
 
   void remove_free(node_it node) {
-    if(-1 != node->second.free_buffer)
-      free_nodes[node->second.free_buffer].erase(node->second.free_node);
-    node->second.free_buffer = -1;
-    node->second.free_node = free_nodes[0].end();
+    if(used != node->second.stream)
+      free_nodes[node->second.stream].erase(node->second.free_node);
+    node->second.stream = used;
+    node->second.free_node = free_nodes[dirty].end();
   }
 
   free_it get_free_node(size_t size) {
-    auto free_node = free_nodes[0].lower_bound(size);
-    if(free_nodes[0].end() == free_node) {
+    auto free_node = free_nodes[dirty].lower_bound(size);
+    if(free_nodes[dirty].end() == free_node) {
       size_t capacity = std::max<size_t>(size, block_size);
 
       std::list<chunk_t>::iterator chunk = chunks.insert(
@@ -94,7 +96,7 @@ class block_allocator_t {
 
   node_it insert(chunk_it chunk, char* p) {
     return nodes.insert(std::make_pair(
-      p, node_t { chunk, -1, free_nodes[0].end() }
+      p, node_t { chunk, used, free_nodes[dirty].end() }
     )).first;
   }
 
@@ -112,9 +114,8 @@ class block_allocator_t {
 
   // Split a free node into an allocated node and a smaller free node.
   void split(node_it node, size_t size) {
-    int free_buffer = node->second.free_buffer;
+    size_t stream = node->second.stream;
     chunk_it chunk = node->second.chunk;
-
     remove_free(node);
 
     // Subtract the node's size from the available space.
@@ -130,7 +131,7 @@ class block_allocator_t {
       node_it new_node = insert(chunk, node->first + size);
 
       // Add the new node to the free list.
-      set_free(new_node, free_buffer);
+      set_free(new_node, stream);
     }
   }
 
@@ -141,9 +142,9 @@ class block_allocator_t {
     node_it next = std::next(node);
     chunk_it chunk = node->second.chunk;
     bool prev_free = nodes.end() != prev && prev->second.chunk == chunk &&
-      0 == prev->second.free_buffer;
+      dirty == prev->second.stream;
     bool next_free = nodes.end() != next && next->second.chunk == chunk &&
-      0 == next->second.free_buffer;
+      dirty == next->second.stream;
 
     if(prev_free) {
       remove(node);
@@ -176,7 +177,8 @@ public:
 
   usage_t usage() const {
     usage_t u = usage_t();
-    u.largest_available = free_nodes[0].size() ? free_nodes[0].rbegin()->first : 0;
+    const auto& free_map = free_nodes.find(dirty)->second;
+    u.largest_available = free_map.size() ? free_map.rbegin()->first : 0;
     for(const chunk_t& chunk : chunks) {
       u.allocated += chunk.capacity;
       u.available += chunk.available;
@@ -185,7 +187,7 @@ public:
     }
     u.blocks = (int)chunks.size();
     u.nodes = (int)nodes.size();
-    u.free_nodes = (int)free_nodes[0].size();
+    u.free_nodes = (int)free_map.size();
     return u;
   }
 
@@ -210,11 +212,14 @@ public:
     }
   }
 
+  void stream_sync(cudaStream_t stream) {
+    while(free_nodes[(size_t)stream].size())
+      coalesce(free_nodes[(size_t)stream].begin()->second);
+  }
+
   // Called by the derived type's destructor.
   void reset() {
-    // Move all the zero nodes to the dirty nodes list so they can be coalesced.
-    while(free_nodes[1].size())
-      coalesce(free_nodes[1].begin()->second);
+    stream_sync((cudaStream_t)zero);
     slim();
   }
 
@@ -237,9 +242,9 @@ public:
     if(!size) size = 1;
     size_t offset = align_offset(size);
     size += offset;
-    auto free_node = free_nodes[1].lower_bound(size);
+    auto free_node = free_nodes[zero].lower_bound(size);
 
-    if(free_node == free_nodes[1].end()) {
+    if(free_node == free_nodes[zero].end()) {
       // Request 128KB of dirty data.
       size_t capacity = std::max<size_t>(size, 128<< 10);
       free_node = get_free_node(capacity);
@@ -249,13 +254,26 @@ public:
       block_zero(node->first, node_size(node));
 
       // Move the node to the zero list.
-      free_node = set_free(node, 1);
+      free_node = set_free(node, zero);
     }
 
     node_it node = free_node->second;
     split(node, size);
 
     return align_ptr(node->first, offset);
+  }
+
+  void* allocate(size_t size, stream_t stream) {
+    // Try to allocate from the current stream, then from the dirty pool.
+    if(!size) size = 1;
+    size_t offset = align_offset(size);
+    size += offset;
+
+    auto free_node = free_nodes[stream].lower_bound(size);
+    // if(free_node == free_nodes[zero])
+
+
+    return align_ptr(node, offset);
   }
 
   void free(void* p_) {
