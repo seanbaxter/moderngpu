@@ -9,6 +9,8 @@
 BEGIN_MGPU_NAMESPACE
 
 class block_allocator_t {
+  enum { block_size = 4<< 20 };   // typical allocation size.
+
   struct node_t;
   struct chunk_t;
 
@@ -67,31 +69,32 @@ class block_allocator_t {
     node->second.free_node = free_nodes[0].end();
   }
 
-  free_it insert_chunk(size_t alloc_size) {
-    std::list<chunk_t>::iterator chunk = chunks.insert(
-      chunks.begin(), 
-      chunk_t {
-        alloc_size, 
-        alloc_size, 
-        (char*)block_allocate(alloc_size)
-      }
-    );
+  free_it get_free_node(size_t size) {
+    auto free_node = free_nodes[0].lower_bound(size);
+    if(free_nodes[0].end() == free_node) {
+      size_t capacity = std::max<size_t>(size, block_size);
 
-    // Insert and link this node to the next node.
-    node_it node = insert(chunk, chunk->p);
+      std::list<chunk_t>::iterator chunk = chunks.insert(
+        chunks.begin(), 
+        chunk_t {
+          capacity, 
+          capacity, 
+          (char*)block_allocate(capacity)
+        }
+      );
+      
+      // Insert and link this node to the next node.
+      node_it node = insert(chunk, chunk->p);
 
-    // Add the node to the free list.
-    return set_free(node);
+      // Add the node to the free list.
+      free_node = set_free(node);
+    }
+    return free_node;
   }
 
   node_it insert(chunk_it chunk, char* p) {
     return nodes.insert(std::make_pair(
-      p, 
-      node_t {
-        chunk,
-        -1,
-        free_nodes[0].end()
-      }
+      p, node_t { chunk, -1, free_nodes[0].end() }
     )).first;
   }
 
@@ -131,11 +134,35 @@ class block_allocator_t {
     }
   }
 
+  void coalesce(node_it node) {
+    // Collapse this node into the left.
+    remove_free(node);
+    node_it prev = std::prev(node);
+    node_it next = std::next(node);
+    chunk_it chunk = node->second.chunk;
+    bool prev_free = nodes.end() != prev && prev->second.chunk == chunk &&
+      0 == prev->second.free_buffer;
+    bool next_free = nodes.end() != next && next->second.chunk == chunk &&
+      0 == next->second.free_buffer;
+
+    if(prev_free) {
+      remove(node);
+      node = prev;
+    }
+    if(next_free) {
+      remove(next);
+    }
+
+    // Insert the free node into the dirty buffer.
+    set_free(node);
+  }
+
 protected:
   virtual void* block_allocate(size_t size) = 0;
   virtual void block_free(void* p) = 0;
   virtual void block_zero(void* p, size_t size) = 0;
   virtual ~block_allocator_t() { };
+
 
 public:
   struct usage_t {
@@ -183,16 +210,47 @@ public:
     }
   }
 
+  // Called by the derived type's destructor.
+  void reset() {
+    // Move all the zero nodes to the dirty nodes list so they can be coalesced.
+    while(free_nodes[1].size())
+      coalesce(free_nodes[1].begin()->second);
+    slim();
+  }
+
   // return pointer,size to next part.
   // add lhs to managed memory.
   void* allocate(size_t size) {
     if(!size) size = 1;
     size_t offset = align_offset(size);
     size += offset;
-    auto free_node = free_nodes[0].lower_bound(size);
+    free_it free_node = get_free_node(size);
 
-    if(free_node == free_nodes[0].end())
-      free_node = insert_chunk(std::max<size_t>(size, 1<< 20));
+    node_it node = free_node->second;
+    split(node, size);
+
+    return align_ptr(node->first, offset);
+  }
+
+  void* allocate_zero(size_t size) {
+    // Request an available free node in the zero queue.
+    if(!size) size = 1;
+    size_t offset = align_offset(size);
+    size += offset;
+    auto free_node = free_nodes[1].lower_bound(size);
+
+    if(free_node == free_nodes[1].end()) {
+      // Request 128KB of dirty data.
+      size_t capacity = std::max<size_t>(size, 128<< 10);
+      free_node = get_free_node(capacity);
+
+      // Clear the returned dirty node.
+      node_it node = free_node->second;
+      block_zero(node->first, node_size(node));
+
+      // Move the node to the zero list.
+      free_node = set_free(node, 1);
+    }
 
     node_it node = free_node->second;
     split(node, size);
@@ -202,29 +260,12 @@ public:
 
   void free(void* p_) {
     char* p = static_cast<char*>(p_);
-    node_it node = nodes.lower_bound(p);
+    node_it node = std::prev(nodes.upper_bound(p));
 
     chunk_it chunk = node->second.chunk;
     chunk->available += node_size(node);
 
-    // Collapse this node into the left.
-    node_it prev = std::prev(node);
-    node_it next = std::next(node);
-    bool prev_free = nodes.end() != prev && prev->second.chunk == chunk &&
-      0 == prev->second.free_buffer;
-    bool next_free = nodes.end() != next && next->second.chunk == chunk &&
-      0 == next->second.free_buffer;
-
-    if(prev_free) {
-      remove(node);
-      node = prev;
-    }
-    if(next_free) {
-      remove(next);
-    }
-
-    // Insert the free node.
-    set_free(node);
+    coalesce(node);
   }
 };
 
@@ -247,7 +288,7 @@ protected:
   }
 public:
   virtual ~device_allocator_t() { 
-    slim();
+    reset();
   }
 };
 
@@ -270,7 +311,7 @@ protected:
   }  
 public:
   virtual ~host_allocator_t() { 
-    slim();
+    reset();
   }
 };
 
@@ -301,8 +342,11 @@ int main(int argc, char** argv) {
       }
 
       if(0 == i % 1000) {
+        alloc.slim();
         auto usage = alloc.usage();
-        printf("Iterations %5d  %lu %lu\n", i, usage.allocated, usage.available);
+
+        printf("Iterations %5d  %lu %lu (%f%%)\n", i, 
+          usage.allocated, usage.available, 100.0 * usage.available / usage.allocated);
       }
     }
 
