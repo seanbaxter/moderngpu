@@ -95,12 +95,47 @@ class block_allocator_t {
     )).first;
   }
 
+  static size_t align_offset(size_t size) {
+    size_t align = 128;
+    while(align > size) align /= 2;
+    return align - 1;
+  }
+
+  static char* align_ptr(char* p, size_t offset) {
+    size_t x = (size_t)p;
+    x = ~offset & (x + offset);
+    return (char*)x;
+  }
+
+  // Split a free node into an allocated node and a smaller free node.
+  void split(node_it node, size_t size) {
+    int free_buffer = node->second.free_buffer;
+    chunk_it chunk = node->second.chunk;
+
+    remove_free(node);
+
+    // Subtract the node's size from the available space.
+    chunk->available -= node_size(node);
+    
+    // Split the allocated node into two nodes.
+    size_t excess = node_size(node) - size;
+    if(excess >= 7) {
+      // Update the sizing of the old node and chunk.
+      chunk->available += excess;
+
+      // Create a new node from the end of the old one.
+      node_it new_node = insert(chunk, node->first + size);
+
+      // Add the new node to the free list.
+      set_free(new_node, free_buffer);
+    }
+  }
+
 protected:
   virtual void* block_allocate(size_t size) = 0;
   virtual void block_free(void* p) = 0;
   virtual void block_zero(void* p, size_t size) = 0;
-  virtual ~block_allocator_t() { 
-  };
+  virtual ~block_allocator_t() { };
 
 public:
   struct usage_t {
@@ -111,7 +146,6 @@ public:
     int free_nodes;
     int nodes;
   };
-
 
   usage_t usage() const {
     usage_t u = usage_t();
@@ -133,7 +167,7 @@ public:
     for(auto chunk = chunks.begin(); chunk != chunks.end(); ) {
       auto next = std::next(chunk);
 
-        // This is a free chunk. Remove it.
+      // This is a free chunk. Remove it.
       if(chunk->available == chunk->capacity) {
         node_it node = nodes.find(chunk->p);
 
@@ -152,37 +186,18 @@ public:
   // return pointer,size to next part.
   // add lhs to managed memory.
   void* allocate(size_t size) {
-    // TODO: align me.
-    // TODO: look in the stream free list first.
-    if(size < 4) size = 4;
+    if(!size) size = 1;
+    size_t offset = align_offset(size);
+    size += offset;
     auto free_node = free_nodes[0].lower_bound(size);
 
     if(free_node == free_nodes[0].end())
       free_node = insert_chunk(std::max<size_t>(size, 1<< 20));
-    
+
     node_it node = free_node->second;
-    chunk_it chunk = node->second.chunk;
+    split(node, size);
 
-    // Set this node to allocated.
-    remove_free(node);
-
-    // Subtract the node's size from the available space.
-    chunk->available -= node_size(node);
-    
-    // Split the allocated node into two nodes.
-    size_t excess = node_size(node) - size;
-    if(excess >= 16) {
-      // Update the sizing of the old node and chunk.
-      chunk->available += excess;
-
-      // Create a new node from the end of the old one.
-      node_it new_node = insert(chunk, node->first + size);
-
-      // Add the new node to the free list.
-      set_free(new_node);
-    }
-
-    return node->first;
+    return align_ptr(node->first, offset);
   }
 
   void free(void* p_) {
@@ -196,9 +211,9 @@ public:
     node_it prev = std::prev(node);
     node_it next = std::next(node);
     bool prev_free = nodes.end() != prev && prev->second.chunk == chunk &&
-      free_nodes[0].end() != prev->second.free_node;
+      0 == prev->second.free_buffer;
     bool next_free = nodes.end() != next && next->second.chunk == chunk &&
-      free_nodes[0].end() != next->second.free_node;
+      0 == next->second.free_buffer;
 
     if(prev_free) {
       remove(node);
