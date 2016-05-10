@@ -18,6 +18,7 @@ class block_allocator_t {
 
   struct node_t {
     chunk_it chunk;
+    int free_buffer;
     std::multimap<size_t, node_it>::iterator free_node;
   };
 
@@ -31,8 +32,7 @@ class block_allocator_t {
   std::list<chunk_t> chunks;
 
   // Sort free nodes by size.
-  std::multimap<size_t, node_it> zero_nodes;
-  std::multimap<size_t, node_it> free_nodes;
+  std::multimap<size_t, node_it> free_nodes[2];
 
   // Data for all nodes, indexed by address.
   std::map<char*, node_t> nodes;
@@ -46,27 +46,25 @@ class block_allocator_t {
   }
 
   void remove(node_it node) {
-    // Erase the free node.
-    if(free_nodes.end() != node->second.free_node)
-      free_nodes.erase(node->second.free_node);
-
-    // Erase the node.
+    remove_free(node);
     nodes.erase(node);
   }
 
-  free_it set_free(node_it node) {
+  free_it set_free(node_it node, int buffer = 0) {
     remove_free(node);
 
-    node->second.free_node = free_nodes.insert(
+    node->second.free_node = free_nodes[buffer].insert(
       std::make_pair(node_size(node), node)
     );
+    node->second.free_buffer = buffer;
     return node->second.free_node;
   }
 
   void remove_free(node_it node) {
-    if(free_nodes.end() != node->second.free_node)
-      free_nodes.erase(node->second.free_node);
-    node->second.free_node = free_nodes.end();
+    if(-1 != node->second.free_buffer)
+      free_nodes[node->second.free_buffer].erase(node->second.free_node);
+    node->second.free_buffer = -1;
+    node->second.free_node = free_nodes[0].end();
   }
 
   free_it insert_chunk(size_t alloc_size) {
@@ -91,7 +89,8 @@ class block_allocator_t {
       p, 
       node_t {
         chunk,
-        free_nodes.end()
+        -1,
+        free_nodes[0].end()
       }
     )).first;
   }
@@ -101,7 +100,6 @@ protected:
   virtual void block_free(void* p) = 0;
   virtual void block_zero(void* p, size_t size) = 0;
   virtual ~block_allocator_t() { 
-    assert(free_nodes.size() == chunks.size());
   };
 
 public:
@@ -117,7 +115,7 @@ public:
 
   usage_t usage() const {
     usage_t u = usage_t();
-    u.largest_available = free_nodes.size() ? free_nodes.rbegin()->first : 0;
+    u.largest_available = free_nodes[0].size() ? free_nodes[0].rbegin()->first : 0;
     for(const chunk_t& chunk : chunks) {
       u.allocated += chunk.capacity;
       u.available += chunk.available;
@@ -126,7 +124,7 @@ public:
     }
     u.blocks = (int)chunks.size();
     u.nodes = (int)nodes.size();
-    u.free_nodes = (int)free_nodes.size();
+    u.free_nodes = (int)free_nodes[0].size();
     return u;
   }
 
@@ -157,9 +155,9 @@ public:
     // TODO: align me.
     // TODO: look in the stream free list first.
     if(size < 4) size = 4;
-    auto free_node = free_nodes.lower_bound(size);
+    auto free_node = free_nodes[0].lower_bound(size);
 
-    if(free_node == free_nodes.end())
+    if(free_node == free_nodes[0].end())
       free_node = insert_chunk(std::max<size_t>(size, 1<< 20));
     
     node_it node = free_node->second;
@@ -198,9 +196,9 @@ public:
     node_it prev = std::prev(node);
     node_it next = std::next(node);
     bool prev_free = nodes.end() != prev && prev->second.chunk == chunk &&
-      free_nodes.end() != prev->second.free_node;
+      free_nodes[0].end() != prev->second.free_node;
     bool next_free = nodes.end() != next && next->second.chunk == chunk &&
-      free_nodes.end() != next->second.free_node;
+      free_nodes[0].end() != next->second.free_node;
 
     if(prev_free) {
       remove(node);
