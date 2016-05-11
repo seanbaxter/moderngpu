@@ -6,6 +6,7 @@
 #include <exception>
 #include "util.hxx"
 #include "launch_params.hxx"
+#include "allocator.hxx"
 
 BEGIN_MGPU_NAMESPACE
 
@@ -76,6 +77,7 @@ class standard_context_t : public context_t {
 protected:
   cudaDeviceProp _props;
   int _ptx_version;
+  int _ordinal;
   cudaStream_t _stream;
 
   cudaEvent_t _timer[2];
@@ -91,9 +93,8 @@ public:
     if(cudaSuccess != result) throw cuda_exception_t(result);
     _ptx_version = attr.ptxVersion;
 
-    int ord;
-    cudaGetDevice(&ord);
-    cudaGetDeviceProperties(&_props, ord);
+    cudaGetDevice(&_ordinal);
+    cudaGetDeviceProperties(&_props, _ordinal);
     
     cudaEventCreate(&_timer[0]);
     cudaEventCreate(&_timer[1]);
@@ -112,6 +113,12 @@ public:
   virtual const cudaDeviceProp& props() const { return _props; }
   virtual int ptx_version() const { return _ptx_version; }
   virtual cudaStream_t stream() { return _stream; }
+  virtual int ordinal() const { return _ordinal; }
+
+  virtual void set_device() { 
+    cudaError_t result = cudaSetDevice(_ordinal); 
+    if(cudaSuccess != result) throw cuda_exception_t(result);
+  }
 
   // Alloc GPU memory.
   virtual void* alloc(size_t size, memory_space_t space) {
@@ -123,6 +130,15 @@ public:
       if(cudaSuccess != result) throw cuda_exception_t(result);
     }
     return p;    
+  }
+
+  virtual void* alloc_zero(size_t size, memory_space_t space) {
+    void* p = alloc(size, space);
+    if(memory_space_device == space)
+      cudaMemset(p, 0, size);
+    else 
+      memset(p, 0, size);
+    return p;
   }
 
   virtual void free(void* p, memory_space_t space) {
@@ -153,6 +169,80 @@ public:
     float ms;
     cudaEventElapsedTime(&ms, _timer[0], _timer[1]);
     return ms / 1.0e3;
+  }
+};
+
+
+////////////////////////////////////////////////////////////////////////////////
+// pooling_context_t is a trivial implementation of context_t. Users can
+// derive this type to provide a custom allocator.
+
+class pooling_context_t : public standard_context_t {
+protected:
+  typedef block_allocator_t::pool_t pool_t;
+  std::shared_ptr<block_allocator_t> device_allocator;
+  std::shared_ptr<block_allocator_t> host_allocator;
+
+public:
+  // Making this a template argument means we won't generate an instance
+  // of dummy_k for each translation unit. 
+  template<int dummy_arg = 0>
+  pooling_context_t(bool print_prop = true) : 
+    standard_context_t(print_prop) {
+
+    device_allocator.reset(new device_allocator_t());
+    host_allocator.reset(new host_allocator_t());
+  }
+
+  ~pooling_context_t() {
+    synchronize();
+  }
+
+  virtual const cudaDeviceProp& props() const { return _props; }
+  virtual int ptx_version() const { return _ptx_version; }
+  virtual cudaStream_t stream() { return _stream; }
+
+  virtual void* alloc(size_t size, memory_space_t space) {
+    void* p;
+    if(memory_space_device == space)
+      p = device_allocator->allocate(size, pool_t{0, stream()});
+    else
+      p = host_allocator->allocate(size, pool_t{ordinal(), stream()});
+    return p;
+  }
+
+  virtual void* alloc_zero(size_t size, memory_space_t space) {
+    void* p;
+    if(memory_space_device == space)
+      p = device_allocator->allocate_zero(size);
+    else
+      p = host_allocator->allocate_zero(size);
+    return p;
+  }
+
+  virtual void free(void* p, memory_space_t space) {
+    if(memory_space_device == space)
+      device_allocator->free(p, pool_t{0, stream()});
+    else
+      host_allocator->free(p, pool_t{ordinal(), stream()});
+  }
+
+  virtual void synchronize() {
+    // synchronize on the device or stream.
+    standard_context_t::synchronize();
+
+    if(0 == stream()) {
+      device_allocator->pool_release_all();
+      host_allocator->pool_release_ordinal(ordinal());
+    } else {
+      device_allocator->pool_release(pool_t{ 0, stream()});
+      host_allocator->pool_release(pool_t{ordinal(), stream()});
+    }
+  }
+
+  virtual block_allocator_t* allocator(memory_space_t space) {
+    return (memory_space_device == space) ?
+      device_allocator.get() : host_allocator.get();
   }
 };
 

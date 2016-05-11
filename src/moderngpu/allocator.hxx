@@ -1,18 +1,30 @@
-// moderngpu copyright (c) 2016, Sean Baxter http://www.moderngpu.com
+#pragma once
 
-#include <cassert>
-#include <vector>
-
-#include <moderngpu/context.hxx>
-#include <moderngpu/tuple.hxx>
-#include <mutex>
 #include <map>
 #include <list>
-
+#include <mutex>
+#include "types.hxx"
 
 BEGIN_MGPU_NAMESPACE
 
 class block_allocator_t {
+public:
+  struct pool_t {
+    int ordinal;
+    cudaStream_t stream;
+    bool operator<(pool_t rhs) const {
+      return ordinal < rhs.ordinal || 
+        (!(rhs.ordinal < ordinal) && stream < rhs.stream);
+    }
+    bool operator==(pool_t rhs) const {
+      return ordinal == rhs.ordinal && stream == rhs.stream;
+    }
+    bool operator!=(pool_t rhs) const {
+      return !(*this == rhs);
+    }
+  };
+
+private:
   enum { block_size = 4<< 20 };   // typical allocation size.
 
   struct node_t;
@@ -23,11 +35,10 @@ class block_allocator_t {
   typedef std::list<chunk_t>::iterator chunk_it;
   typedef std::multimap<size_t, node_it>::iterator free_it;
 
-  typedef tuple<int, cudaStream_t> pool_t;
 
-  const pool_t dirty = pool_t(-1, nullptr);
-  const pool_t zero = pool_t(-2, nullptr);
-  const pool_t used = pool_t(-3, nullptr);
+  const pool_t dirty = pool_t { -1, nullptr };
+  const pool_t zero = pool_t { -2, nullptr };
+  const pool_t used = pool_t { -3, nullptr };
 
   struct node_t {
     chunk_it chunk;
@@ -96,6 +107,12 @@ class block_allocator_t {
   free_it get_free_node(size_t size) {
     auto free_node = free_nodes[dirty].lower_bound(size);
     if(free_nodes[dirty].end() == free_node) {
+      // TODO: Calculate free nodes waiting on streams and optionally
+      // cudaDeviceSynchronize and release all free lists to clear up
+      // the most space.
+      // Release unused nodes here.
+      slim();
+
       size_t capacity = std::max<size_t>(size, block_size);
 
       std::list<chunk_t>::iterator chunk = chunks.insert(
@@ -237,12 +254,21 @@ public:
       coalesce(free_nodes[pool].begin()->second, dirty);
   }
 
+  void pool_release_ordinal(int ordinal) {
+    std::lock_guard<std::recursive_mutex> guard(mutex);
+    
+    for(auto& pool : free_nodes) {
+      if(ordinal == pool.first.ordinal)
+        pool_release(pool.first);
+    }
+  }
+
   void pool_release_all() {
     std::lock_guard<std::recursive_mutex> guard(mutex);
     
     for(auto& pool : free_nodes) {
-      if(dirty != pool.first && zero != pool.first)
-      pool_release(pool.first);
+      if(dirty != pool.first)
+        pool_release(pool.first);
     }
   }
 
@@ -381,53 +407,3 @@ public:
 };
 
 END_MGPU_NAMESPACE
-
-
-int main(int argc, char** argv) {
-  {
-    mgpu::host_allocator_t alloc;
-
-    int count =       100000;
-    int iterations =  1000000;
-    std::vector<void*> x(count);
-
-    int alloc_count = 0;
-    int free_count = 0;
-
-    for(int i = 0; i < iterations; ++i) {
-      int index = rand() % count;
-
-      // Free or allocate.
-      if(x[index]) {
-        alloc.free(x[index]);
-        x[index] = nullptr;
-        ++free_count;
-      } else {
-        if(index > 99 * count / 100)
-          x[index] = alloc.allocate_zero(rand() % 5000);
-        else
-          x[index] = alloc.allocate(rand() % 5000);
-
-        ++alloc_count;
-      }
-
-      if(0 == i % 1000) {
-        alloc.slim();
-        auto usage = alloc.usage();
-
-        printf("Iterations %5d  %lu %lu (%f%%)\n", i, 
-          usage.allocated, usage.available, 100.0 * usage.available / usage.allocated);
-      }
-    }
-
-    // Free all allocations.
-    for(int i = 0; i < count; ++i)
-      if(x[i]) {
-        alloc.free(x[i]);
-      }
-    auto usage = alloc.usage();
-    printf("DONE  %lu %lu %d %d\n", usage.allocated, usage.available, usage.nodes, usage.free_nodes);
-  }
-
-  return 0;
-}

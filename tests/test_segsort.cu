@@ -17,7 +17,7 @@ std::vector<int> cpu_segsort(const std::vector<int>& data,
 }
 
 int main(int argc, char** argv) {
-  standard_context_t context;
+  pooling_context_t context;
 
   for(int count = 1000; count < 23456789; count += count / 10) {
 
@@ -45,12 +45,15 @@ int main(int argc, char** argv) {
         }
       }
 
+
       // Check that the keys are sorted.
       bool success = ref == sorted;
       printf("count = %8d it = %3d %s\n", count, it, 
         (ref == sorted) ? "SUCCESS" : "FAILURE");
       if(!success) exit(0);
     }
+
+      context.synchronize();
   }
 
   return 0;

@@ -382,4 +382,69 @@ tuple_cat(tpl1_t&& tpl1, tpl2_t&& tpl2, tpls_t&&... tpls) {
   );
 }
 
+/////////////////////////////
+// Tuple comparison operators
+
+namespace detail {
+template<size_t i, size_t count>
+struct _tuple_compare {
+  template<typename tpl_t>
+  MGPU_HOST_DEVICE static bool eq(const tpl_t a, const tpl_t b) {
+    return get<i>(a) == get<i>(b) && _tuple_compare<i + 1, count>::eq(a, b);
+  }
+
+  template<typename tpl_t>
+  MGPU_HOST_DEVICE static bool less(const tpl_t a, const tpl_t b) {
+    return get<i>(a) < get<i>(b) || 
+      (!(get<i>(b) < get<i>(a)) && _tuple_compare<i + 1, count>::less(a, b));
+  }
+};
+
+template<size_t count>
+struct _tuple_compare<count, count> {
+  template<typename tpl_t>
+  MGPU_HOST_DEVICE static bool eq(const tpl_t, const tpl_t) {
+    return true;
+  }
+
+  template<typename tpl_t>
+  MGPU_HOST_DEVICE static bool less(const tpl_t, const tpl_t) {
+    return false;
+  }
+};
+} // namespace detail
+
 END_MGPU_NAMESPACE
+
+
+// Putting comparison operators back into global namespace.
+template<typename... args_t>
+MGPU_HOST_DEVICE bool operator<(const mgpu::tuple<args_t...>& a, 
+  const mgpu::tuple<args_t...>& b) {
+  return mgpu::detail::_tuple_compare<0, sizeof...(args_t)>::less(a, b);
+}
+template<typename... args_t>
+MGPU_HOST_DEVICE bool operator<=(const mgpu::tuple<args_t...>& a, 
+  const mgpu::tuple<args_t...>& b) {
+  return !(b < a);
+}
+template<typename... args_t>
+MGPU_HOST_DEVICE bool operator>(const mgpu::tuple<args_t...>& a, 
+  const mgpu::tuple<args_t...>& b) {
+  return b < a;
+}
+template<typename... args_t>
+MGPU_HOST_DEVICE bool operator>=(const mgpu::tuple<args_t...>& a, 
+  const mgpu::tuple<args_t...>& b) {
+  return !(a < b);
+}
+template<typename... args_t>
+MGPU_HOST_DEVICE bool operator==(const mgpu::tuple<args_t...>& a, 
+  const mgpu::tuple<args_t...>& b) {
+  return mgpu::detail::_tuple_compare<0, sizeof...(args_t)>::eq(a, b);
+}
+template<typename... args_t>
+MGPU_HOST_DEVICE bool operator!=(const mgpu::tuple<args_t...>& a, 
+  const mgpu::tuple<args_t...>& b) {
+  return !(a == b);
+}
