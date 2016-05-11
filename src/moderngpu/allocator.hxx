@@ -223,10 +223,17 @@ public:
   }
 
   // de-allocate all free blocks and zero blocks that are mostly free.
-  void slim() {
+  void slim(pool_t pool) {
     std::lock_guard<std::recursive_mutex> guard(mutex);
     
     pool_release(zero);
+    if(dirty != pool) {
+      if(nullptr == pool.stream)
+        pool_release_ordinal(pool.ordinal);
+      else
+        pool_release(pool);
+    }
+
     for(auto chunk = chunks.begin(); chunk != chunks.end(); ) {
       auto next = std::next(chunk);
 
@@ -243,6 +250,10 @@ public:
       }
       chunk = next;
     }
+  }
+
+  void slim() {
+    slim(dirty);
   }
 
   // Release the free nodes on a pool back to the dirty pool. This should
@@ -278,7 +289,6 @@ public:
     
     // Release all pools.
     pool_release_all();
-    pool_release(zero);
     slim();
   }
 
@@ -289,7 +299,7 @@ public:
     if(!size) size = 1;
     size_t offset = align_offset(size);
     size += offset;
-    free_it free_node = get_free_node(size);
+    free_it free_node = get_free_node(size, dirty);
 
     node_it node = free_node->second;
     split(node, size);
@@ -298,7 +308,7 @@ public:
   }
 
   // Allocate zero'd memory.
-  void* allocate_zero(size_t size) {
+  void* allocate_zero(size_t size, pool_t pool) {
     std::lock_guard<std::recursive_mutex> guard(mutex);
     
     // Request an available free node in the zero queue.
@@ -306,6 +316,8 @@ public:
     size_t offset = align_offset(size);
     size += offset;
     auto free_node = free_nodes[zero].lower_bound(size);
+
+    // Get memory from this stream's pool first.
 
     if(free_node == free_nodes[zero].end()) {
       // Request at least 128KB of adjacent memory to quickly zero.
