@@ -8,6 +8,10 @@
 #include <cfloat>
 #include <cstdint>
 
+#ifdef _MSC_VER
+#define _USE_MATH_DEFINES
+#endif
+
 #ifdef __CUDACC__
 
 #ifndef MGPU_HOST_DEVICE
@@ -47,6 +51,8 @@
 #define END_MGPU_NAMESPACE }
 
 BEGIN_MGPU_NAMESPACE
+
+typedef unsigned int uint;
 
 template< bool B, class T = void >
 using enable_if_t = typename std::enable_if<B,T>::type;
@@ -171,7 +177,7 @@ struct is_restrict {
   enum { value = false };
 };
 template<typename arg_t>
-struct is_restrict<arg_t __restrict__> {
+struct is_restrict<arg_t* __restrict__> {
   enum { value = true };
 };
 
@@ -190,8 +196,8 @@ struct remove_restrict {
   typedef arg_t type;
 };
 template<typename arg_t>
-struct remove_restrict<arg_t __restrict__> {
-  typedef arg_t type;
+struct remove_restrict<arg_t* __restrict__> {
+  typedef arg_t* type;
 };
 
 template<typename arg_t>

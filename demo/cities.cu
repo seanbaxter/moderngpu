@@ -1,9 +1,13 @@
+#undef _MSC_FULL_VER
+#define _MSC_FULL_VER 190023506
+
 #include <moderngpu/kernel_intervalmove.hxx>
 #include <moderngpu/kernel_scan.hxx>
 #include <moderngpu/kernel_segreduce.hxx>
 #include <moderngpu/kernel_segsort.hxx>
 #include <fstream>
 #include <sstream>
+#include <math.h>
 
 using namespace mgpu;
 
