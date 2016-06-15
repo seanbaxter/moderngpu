@@ -5,8 +5,8 @@ using namespace mgpu;
 int main(int argc, char** argv) {
   standard_context_t context;
 
-  int num_needles = 1000;
-  int num_haystack = 1000;
+  int num_needles = 100000;
+  int num_haystack = 100000;
   mem_t<int> needles = fill_random(0, 10000, num_needles, true, context);
   mem_t<int> haystack = fill_random(0, 10000, num_haystack, true, context);
 
@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
     
     assert(index <= 0 || needle > haystack_host[index - 1]);
     assert(index >= num_haystack || needle <= haystack_host[index]);
-
+    printf("%d %d\n", needle, index);
   }
 
   return 0;  

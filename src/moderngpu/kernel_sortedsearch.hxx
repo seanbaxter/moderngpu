@@ -4,17 +4,18 @@
 
 BEGIN_MGPU_NAMESPACE
 
-template<bounds_t bounds, typename launch_arg_t = empty_t,
-  typename needles_it, typename haystack_it, typename indices_it,
-  typename comp_it>
-void sorted_search(needles_it needles, int num_needles, haystack_it haystack,
-  int num_haystack, indices_it indices, comp_it comp, context_t& context) {
+template<bounds_t bounds = bounds_lower, typename launch_arg_t = empty_t,
+  typename func_t, typename needles_it, typename haystack_it, typename comp_it,
+  typename... args_t>
+void transform_search(func_t f, needles_it needles, int num_needles, 
+  haystack_it haystack, int num_haystack, comp_it comp, context_t& context,
+  args_t... args) {
 
   typedef typename conditional_typedef_t<launch_arg_t, 
     launch_box_t<
-      arch_20_cta<128, 15>,
-      arch_35_cta<128, 11>,
-      arch_52_cta<128, 15>
+      arch_20_cta<128, 11>,
+      arch_35_cta<128, 7>,
+      arch_52_cta<128, 11>
     >
   >::type_t launch_t;
 
@@ -25,13 +26,14 @@ void sorted_search(needles_it needles, int num_needles, haystack_it haystack,
     haystack, num_haystack, launch_t::nv(context), comp, context);
   const int* mp_data = partitions.data();
 
-  auto k = [=]MGPU_DEVICE(int tid, int cta) {
+  auto k = [=]MGPU_DEVICE(int tid, int cta, args_t... args) {
     typedef typename launch_t::sm_ptx params_t;
-    enum { nt = params_t::nt, vt = params_t::vt, nv = nt * vt };
+    enum { nt = params_t::nt, vt = params_t::vt, vt0 = params_t::vt0 };
+    enum { nv = nt * vt };
     
     __shared__ union {
-      type_t keys[nv + 1];
-      int indices[nv];
+      type_t keys[nt * vt + 1];
+      int indices[nt * vt];
     } shared;
 
     // Load the range for this CTA and merge the values into register.
@@ -54,11 +56,33 @@ void sorted_search(needles_it needles, int num_needles, haystack_it haystack,
     });
     __syncthreads();
 
-    shared_to_mem<nt, vt>(shared.indices, tid, range.a_count(), 
-      indices + range.a_begin);
+    // Load the indices in strided order.
+    array_t<int, vt> indices = shared_to_reg_strided<nt, vt>(
+      shared.indices, tid);
+
+    // Invoke the user-supplied functor f.
+    strided_iterate<nt, vt, vt0>([=](int i, int j) {
+      f(range.a_begin + j, indices[i], args...);
+    }, tid, range.a_count());
   };
 
-  cta_transform<launch_t>(k, num_needles + num_haystack, context);
+  cta_transform<launch_t>(k, num_needles + num_haystack, context, args...);
 }
 
+
+template<bounds_t bounds, typename launch_arg_t = empty_t,
+  typename needles_it, typename haystack_it, typename indices_it,
+  typename comp_it>
+void sorted_search(needles_it needles, int num_needles, haystack_it haystack,
+  int num_haystack, indices_it indices, comp_it comp, context_t& context) {
+
+  transform_search<bounds, launch_arg_t>(
+    [=]MGPU_DEVICE(int needle, int haystack, int* indices) {
+      indices[needle] = haystack;
+    }, needles, num_needles, haystack, num_haystack, comp, context, indices
+  );
+}
+
+
 END_MGPU_NAMESPACE
+

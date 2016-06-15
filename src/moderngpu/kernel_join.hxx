@@ -11,38 +11,41 @@ template<typename launch_arg_t = empty_t,
 mem_t<int2> inner_join(a_it a, int a_count, b_it b, int b_count, 
   comp_t comp, context_t& context) {
 
-  // Compute lower and upper bounds of a into b.
+  // Compute lower bounds of a into b.
   mem_t<int> lower(a_count, context);
-  mem_t<int> upper(a_count, context);
   sorted_search<bounds_lower, launch_arg_t>(a, a_count, b, b_count, 
     lower.data(), comp, context);
-  sorted_search<bounds_upper, launch_arg_t>(a, a_count, b, b_count, 
-    upper.data(), comp, context);
 
-  // Compute output ranges by scanning upper - lower. Retrieve the reduction
-  // of the scan, which specifies the size of the output array to allocate.
-  mem_t<int> scanned_sizes(a_count, context);
-  const int* lower_data = lower.data();
-  const int* upper_data = upper.data();
+  // Compute upper bounds of a into b. Emit the difference upper-lower, which
+  // is the number of matches for each element of a into b.
+  mem_t<int> segments(a_count, context);
+  transform_search<bounds_upper, launch_arg_t>(
+    []MGPU_DEVICE(int needle, int haystack, const int* lower, int* matches) {
+      matches[needle] = haystack - lower[needle];
+    }, a, a_count, b, b_count, comp, context, lower.data(), segments.data()
+  );
+  
+  // Scan the matches into a segments descriptor array.
+  mem_t<int> join_count(1, context, memory_space_host);
+  scan_event(segments.data(), a_count, segments.data(), plus_t<int>(), 
+    join_count.data(), context, context.event());
 
-  mem_t<int> count(1, context);
-  transform_scan<int>([=]MGPU_DEVICE(int index) {
-    return upper_data[index] - lower_data[index];
-  }, a_count, scanned_sizes.data(), plus_t<int>(), count.data(), context);
+  // Allocate space for the join.
+  cudaEventSynchronize(context.event());
+  int count = join_count.data()[0];
+  mem_t<int2> output(count, context);
 
-  // Allocate an int2 output array and use load-balancing search to compute
-  // the join.
-  int join_count = from_mem(count)[0];
-  mem_t<int2> output(join_count, context);
-  int2* output_data = output.data();
-
-  // Use load-balancing search on the segmens. The output is a pair with
-  // a_index = seg and b_index = lower_data[seg] + rank.
-  auto k = [=]MGPU_DEVICE(int index, int seg, int rank, tuple<int> lower) {
-    output_data[index] = make_int2(seg, get<0>(lower) + rank);
-  };
-  transform_lbs<launch_arg_t>(k, join_count, scanned_sizes.data(), a_count,
-    make_tuple(lower_data), context);
+  // Use load-balancing search on the segments. The output is a pair with
+  // a_index = seg and b_index = lower[seg] + rank.
+  transform_lbs<launch_arg_t>(
+    []MGPU_DEVICE(
+      int index, int seg, int rank, 
+      tuple<int> lower, int2* output
+    ) {
+      output[index] = make_int2(seg, get<0>(lower) + rank);
+    }, count, segments.data(), a_count, 
+    make_tuple(lower.data()), context, output.data()
+  );
 
   return output;
 }
